@@ -1,0 +1,79 @@
+use std::str::FromStr;
+use crate::ast;
+use crate::binop;
+use crate::unaryop;
+
+grammar;
+
+// return the String from the ID
+Type: &'input str = <ID> => <>;
+
+// parses a string of digits into an i32
+Num: i32 = <INT_STR> => i32::from_str(<>).unwrap();
+
+// helper to parse "[1]" and return the i32 inside
+Index: i32 = "[" <Num> "]" => <>;
+
+/// comma seperated list of t's
+Comma<T>: Vec<T> = { 
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => { v.push(e); v }
+    }
+};
+
+////////////////////////////////
+// Match precedence
+////////////////////////////////
+match {
+    r"\s*" => { }, //whitespace (skip)
+    r"//[^\n\r]*" => { }, //comments (skip)
+
+    r"[a-zA-Z][a-zA-Z0-9_’']*" => ID,
+    r"[0-9]+" => INT_STR,
+} else {
+    _
+}
+
+/// this can be used for redirection where we want to be able to parse any expr 
+/// not just one within our precedence level (or lower). Example: Parentheses
+AnyExpr: ast::Expr = Expr;
+
+pub Expr: ast::Expr = {
+    #[precedence(level="0")]
+    <n:Num> => ast::Expr::IntLiteral(n), // literal
+    <name:ID> "(" <args:Comma<Expr>> ")" => ast::Expr::FnCall(name.to_string(), args), // function call
+    <name:ID> <inds:Index+> => ast::Expr::ArrayVar(name.to_string(), inds), // indexed array variable
+    <name:ID> => ast::Expr::Var(name.to_string()), // identifier
+    "(" <AnyExpr> ")" => <>, // parens
+
+    #[precedence(level="1")] #[assoc(side="left")]
+    "-" <e:Expr> => unaryop!(Neg, e),
+    "!" <e:Expr> => unaryop!(Not, e),
+
+    #[precedence(level="2")] #[assoc(side="left")]
+	<l:Expr> "*" <r:Expr> => binop!(l, Mul, r),
+    <l:Expr> "*>>" <r:Expr> => binop!(l, HighMul, r),
+    <l:Expr> "/" <r:Expr> => binop!(l, Div, r),
+    <l:Expr> "%" <r:Expr> => binop!(l, Mod, r),
+
+    #[precedence(level="3")] #[assoc(side="left")]
+    <l:Expr> "+" <r:Expr> => binop!(l, Add, r),
+    <l:Expr> "-" <r:Expr> => binop!(l, Sub, r),
+
+    #[precedence(level="4")] #[assoc(side="left")]
+    <l:Expr> "<"  <r:Expr> => binop!(l, Lt, r),
+    <l:Expr> "<=" <r:Expr> => binop!(l, Le, r),
+    <l:Expr> ">"  <r:Expr> => binop!(l, Gt, r),
+    <l:Expr> ">=" <r:Expr> => binop!(l, Ge, r),
+
+    #[precedence(level="5")] #[assoc(side="left")]
+    <l:Expr> "==" <r:Expr> => binop!(l, Eq, r),
+    <l:Expr> "!=" <r:Expr> => binop!(l, Neq, r),
+
+    #[precedence(level="6")] #[assoc(side="left")]
+    <l:Expr> "&" <r:Expr> => binop!(l, Land, r),
+
+    #[precedence(level="7")] #[assoc(side="left")]
+    <l:Expr> "|" <r:Expr> => binop!(l, Lor, r),
+};
