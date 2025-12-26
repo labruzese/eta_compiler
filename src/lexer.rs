@@ -75,7 +75,7 @@ pub enum Token {
 
 impl<'fid> From<ParseIntError> for Diagnostic<'fid> {
     fn from(err: ParseIntError) -> Self {
-        error!("Illegal int: {}", err)
+        error!("illegal integer literal: {}", err)
     }
 }
 

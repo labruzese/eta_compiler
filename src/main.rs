@@ -14,7 +14,7 @@ fn main() {
         lex_file: PathBuf::from("lexed.lex"),
     });
     let mut sm = sources::SourceManager::new();
-    let source = r#"p2*(#&!q1/g)"#;
+    let source = r#"p2*(#&!q1/g)*203948398293843"#;
     let fid = sm.add("dummy.rs", Rc::from(source));
     parser::parse(sm, fid);
 }
