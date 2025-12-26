@@ -7,6 +7,12 @@ use crate::{
     errors::{self, Diagnostic},
 };
 
+impl<'a> Diagnostic<'a> {
+    fn from_lexer(_lex: &mut logos::Lexer<'_, Token>) -> Self {
+        error!("unknown token")
+    }
+}
+
 pub type Lexer<'input> = logos::Lexer<'input, Token>;
 
 #[derive(Logos, Clone, Debug, PartialEq)]
@@ -14,7 +20,9 @@ pub type Lexer<'input> = logos::Lexer<'input, Token>;
     skip r"[ \t\n\f]+", // whitespace
     skip r"//.*\n?", // // comments
     skip r"/\*([^*]|\*[^/])*\*/", // /* comments */ 
-    error = errors::Diagnostic,
+)]
+#[logos(
+    error(errors::Diagnostic<'s>, Diagnostic::from_lexer)
 )]
 pub enum Token {
     #[regex("[a-zA-Z][a-zA-Z0-9_’']*", |lex| lex.slice().to_string())]
@@ -65,7 +73,7 @@ pub enum Token {
     Lor,
 }
 
-impl From<ParseIntError> for Diagnostic {
+impl<'fid> From<ParseIntError> for Diagnostic<'fid> {
     fn from(err: ParseIntError) -> Self {
         error!("Illegal int: {}", err)
     }
@@ -76,7 +84,29 @@ impl fmt::Display for Token {
         match self {
             Token::Identifier(name) => write!(f, "id {}", name),
             Token::Integer(i) => write!(f, "integer {}", i),
-            _ => write!(f, "{self:?}"),
+
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::LBracket => write!(f, "["),
+            Token::RBracket => write!(f, "]"),
+
+            Token::OperatorMul => write!(f, "*"),
+            Token::OperatorHighMul => write!(f, "*>>"),
+            Token::OperatorDiv => write!(f, "/"),
+            Token::OperatorMod => write!(f, "%"),
+
+            Token::OperatorNot => write!(f, "!"),
+            Token::Minus => write!(f, "-"),
+            Token::OperatorAdd => write!(f, "+"),
+
+            Token::RelOpEq => write!(f, "=="),
+            Token::RelOpNeq => write!(f, "!="),
+            Token::RelOpGr => write!(f, ">"),
+            Token::RelOpGe => write!(f, ">="),
+            Token::RelOpLt => write!(f, "<"),
+            Token::RelOpLe => write!(f, "<="),
+            Token::Land => write!(f, "&"),
+            Token::Lor => write!(f, "|"),
         }
     }
 }

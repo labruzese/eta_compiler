@@ -1,4 +1,7 @@
-use std::fmt::Debug;
+use std::{
+    fmt::{Debug, Display},
+    rc::Rc,
+};
 
 use ariadne::{Color, Label, Report, ReportKind};
 
@@ -33,15 +36,15 @@ pub enum Level {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Diagnostic {
+pub struct Diagnostic<'fid> {
     pub level: Level,
     pub code: Option<String>,
     pub message: String,
-    pub labels: Vec<(EtaSpan, String, Color)>,
+    pub labels: Vec<(EtaSpan<'fid>, String, Color)>,
     pub note: Option<String>,
 }
 
-impl Diagnostic {
+impl<'fid> Diagnostic<'fid> {
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             level: Level::Error,
@@ -77,12 +80,12 @@ impl Diagnostic {
         self
     }
 
-    pub fn with_primary_label(mut self, span: EtaSpan, message: impl Into<String>) -> Self {
+    pub fn with_primary_label(mut self, span: EtaSpan<'fid>, message: impl Into<String>) -> Self {
         self.labels.push((span, message.into(), Color::Red));
         self
     }
 
-    pub fn with_secondary_label(mut self, span: EtaSpan, message: impl Into<String>) -> Self {
+    pub fn with_secondary_label(mut self, span: EtaSpan<'fid>, message: impl Into<String>) -> Self {
         self.labels.push((span, message.into(), Color::Yellow));
         self
     }
@@ -93,16 +96,16 @@ impl Diagnostic {
     }
 }
 
-impl Default for Diagnostic {
+impl<'fid> Default for Diagnostic<'fid> {
     fn default() -> Self {
         Self::error("Default error message")
     }
 }
 
-//// Interface rest of project with ariadne
+///////// Interface rest of project with ariadne
 
-impl ariadne::Span for EtaSpan {
-    type SourceId = FileId;
+impl<'fid> ariadne::Span for EtaSpan<'fid> {
+    type SourceId = &'fid FileId;
 
     fn source(&self) -> &Self::SourceId {
         &self.file_id
@@ -143,8 +146,7 @@ impl SourceManager {
         }
 
         // Print to stderr
-        if let Some(src) = self.get_source(fid) {
-            // Pass a tuple of (FileId, Source) directly as the cache
+        if let Some(src) = self.get_source(&fid) {
             let _ = builder.finish().eprint((fid, ariadne::Source::from(src)));
         }
     }
