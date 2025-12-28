@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Range, rc::Rc};
+use std::{fmt::Debug, ops::Range};
 
 use ariadne::{Color, Label, Report, ReportKind};
 
@@ -110,7 +110,6 @@ impl NoFileDiagnostic {
                         l,
                         c,
                     )
-                        .into()
                 })
                 .collect(),
             note: self.note,
@@ -235,7 +234,7 @@ impl SourceManager {
         }
 
         // Print to stderr
-        if let Some(src) = self.get_source(&fid) {
+        if let Some(src) = self.get_source(fid) {
             let _ = builder.finish().eprint((fid, ariadne::Source::from(src)));
         }
     }
