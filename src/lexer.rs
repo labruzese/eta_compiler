@@ -117,16 +117,16 @@ impl fmt::Display for Token {
             Token::Comma => write!(f, ","),
 
             Token::BoolLiteral(b) => write!(f, "{}", b),
-            Token::StrLiteral(str) => write!(f, "string {}", escaped(str)),
-            Token::CharLiteral(ch) => write!(
-                f,
-                "character {}",
-                escaped(
-                    &char::from_u32(*ch)
-                        .expect("converting u32 back to char failed")
-                        .to_string()
+            Token::StrLiteral(str) => write!(f, "string {}", str.escape_default()),
+            Token::CharLiteral(ch) => {
+                write!(
+                    f,
+                    "character {}",
+                    char::from_u32(*ch)
+                        .expect("later me problem")
+                        .escape_default()
                 )
-            ),
+            }
             Token::Identifier(name) => write!(f, "id {}", name),
             Token::Integer(i) => write!(f, "integer {}", i),
 
@@ -270,16 +270,4 @@ fn parse_char<'s>(lex: &Lexer<'s>) -> Result<u32, NoFileDiagnostic> {
         }
         _ => Err(NoFileDiagnostic::error("invalid char").with_primary_label(&span, "this char")),
     }
-}
-
-fn escaped(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == ' ' {
-                c.to_string()
-            } else {
-                c.escape_default().collect::<String>()
-            }
-        })
-        .collect()
 }

@@ -16,6 +16,7 @@ fn main() {
     let mut sm = sources::SourceManager::new();
     let source = r#"
 match(t:int[], p:int[]) : int {
+    b:int[] = "this is a string \n \" \u{0042} ~\\ balls"
     return matcher(t, p, prefix(p), 1)
 }
 
