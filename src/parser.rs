@@ -63,11 +63,10 @@ pub fn parse(sm: SourceManager, file_id: FileId) {
                 // TODO: actual parsing logic
             }
             // diagnostic produced by lexer
-            Err(mut diag) => {
+            Err(diag) => {
                 let eta_span: EtaSpan = (&file_id, span).into();
                 // We modify the existing Diagnostic to add the label
                 // Since this comes from the Lexer (e.g., bad int), we flag the specific text.
-                diag = diag.with_primary_label(eta_span.clone(), "Invalid token");
 
                 // emit to lexer if option set
                 if let Some(w) = &mut writer
@@ -80,8 +79,10 @@ pub fn parse(sm: SourceManager, file_id: FileId) {
                         .expect("failed to write to lex file buffer");
                 }
 
+                let binded_diag = diag.specify_file(&file_id);
+
                 // Emit the error
-                sm.emit(diag, eta_span);
+                sm.emit(binded_diag, eta_span);
             }
         }
     }
