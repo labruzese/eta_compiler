@@ -147,7 +147,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "eta_compiler"
+name = "etac"
 version = "0.1.0"
 dependencies = [
  "ariadne",
