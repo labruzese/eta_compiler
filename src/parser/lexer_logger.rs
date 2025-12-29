@@ -16,6 +16,7 @@ impl LexerLogger {
         if options.lex {
             let file = OpenOptions::new()
                 .write(true)
+                .create(true)
                 .truncate(true)
                 .open(&options.lex_file)
                 .expect("unable to open lex file to write in parser");
