@@ -1,4 +1,4 @@
-use crate::flags;
+use crate::cli;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::rc::Rc;
@@ -12,13 +12,15 @@ pub struct LexerLogger {
 }
 
 impl LexerLogger {
-    pub fn new(options: &flags::Flags, source: Rc<str>) -> Self {
+    pub fn new(options: &cli::Flags, name: &str, source: Rc<str>) -> Self {
         if options.lex {
+            let mut path = options.diag_path.clone();
+            path.push(format!("{}.lexed", name));
             let file = OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .open(&options.lex_file)
+                .open(path)
                 .expect("unable to open lex file to write in parser");
 
             Self {

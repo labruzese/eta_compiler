@@ -1,64 +1,37 @@
-use std::{path::PathBuf, rc::Rc};
+use std::{
+    fs::File,
+    io::{BufReader, Read},
+    rc::Rc,
+};
+
+use crate::sources::SourceManager;
 
 mod ast;
+mod cli;
 mod errors;
-mod flags;
 mod lexer;
 mod parser;
 mod sources;
 
 fn main() {
     env_logger::init();
-    flags::init_flags(flags::Flags {
-        lex: true,
-        lex_file: PathBuf::from("lexed.lex"),
-    });
-    let mut sm = sources::SourceManager::new();
-    let source = r#"
-match(t:int[], p:int[]) : int {
-    b:int[] = "this is a string \n \" \u{0042} ~\\ balls"
-    return matcher(t, p, prefix(p), 1)
-}
+    cli::init();
+    let mut source_manager = SourceManager::new();
+    let sources = &cli::flags().source_files;
 
-begin(t:int[], p:int[]) : int[] {
-    return prefix(p)
-}
+    for source in sources {
+        let file = File::open(source).expect("failed to open file");
+        let mut reader = BufReader::new(file);
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf);
 
-next(t:int[], p:int[], pi:int[], i:int):int {
-    return matcher(t, p, pi, i+1)
-}
-
-matcher(t:int[], p:int[], pi:int[], i_:int) : int {
-    i:int = i_
-    n:int = length(t)
-    m:int = length(p)
-
-    q:int = 0
-
-    while i <= n {
-        while (q > 0 & p[q] != t[i-1]) q = pi[q-1]
-        if (p[q] == t[i-1]) q = q + 1
-        if q == m { return i-m+1 }
-
-        i = i+1
+        source_manager.add(
+            source.to_str().expect("invalid unicode in file path"),
+            Rc::from(buf),
+        );
     }
-    return -1
-}
 
-prefix(p:int[]) : int[] {
-    m:int = length(p)
-    pi:int[m]
-    k:int = 0
-    q:int = 2
-    while q <= m {
-        while (k > 0 & p[k] != p[q-1]) k = pi[k-1]
-        if (p[k] == p[q-1]) k = k + 1
-        pi[q-1] = k
-        q = q + 1
+    for id in source_manager.ids() {
+        parser::parse(&source_manager, &id);
     }
-    return pi
-}
-"#;
-    let fid = sm.add("dummy.rs", Rc::from(source));
-    parser::parse(sm, fid);
 }

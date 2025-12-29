@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::{self, Display};
+use std::path::Path;
 use std::rc::Rc;
 
 /// A unique identifier for a source file.
@@ -47,6 +48,10 @@ impl SourceManager {
         }
     }
 
+    pub fn ids(&self) -> impl Iterator<Item = &FileId> {
+        self.sources.keys()
+    }
+
     /// Add a new source file to the manager.
     pub fn add(&mut self, name: impl Into<String>, src: Rc<str>) -> FileId {
         let name = name.into();
@@ -60,7 +65,16 @@ impl SourceManager {
 
     /// id -> Borrow the file name
     pub fn get_file_name(&self, id: &FileId) -> Option<&str> {
-        self.sources.get(id).map(|s| s.name.as_str())
+        self.sources.get(id).map(|s| {
+            if let Some(n) = Path::new(s.name.as_str())
+                .file_stem()
+                .and_then(|x| x.to_str())
+            {
+                n
+            } else {
+                s.name.as_str()
+            }
+        })
     }
 
     /// id -> Get a new (rc) pointer to the source str
