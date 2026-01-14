@@ -1,0 +1,5 @@
+#!/bin/bash
+
+SHARED_PATH=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+"$SHARED_PATH/target/debug/etac" "$@"
