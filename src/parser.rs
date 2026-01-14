@@ -32,6 +32,7 @@ pub fn parse(sm: &SourceManager, file_id: &FileId) {
                 //emit
                 logger.log_error(eta_span.range.start, &diag.message);
                 sm.emit(diag.specify_file(file_id), eta_span);
+                break; // fail on lex error
             }
         }
     }

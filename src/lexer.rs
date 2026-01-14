@@ -39,10 +39,8 @@ pub enum Token {
     KeywordInt,
     #[token("bool")]
     KeywordBool,
-
     #[token(";")]
     SemiColon,
-
     #[token("_")]
     Discard,
     #[token(":")]
@@ -51,7 +49,6 @@ pub enum Token {
     Assign,
     #[token(",")]
     Comma,
-
     #[regex("true|false", |lex| lex.slice().parse()
         .map_err(|err: ParseBoolError| error!("illegal boolean literal: {}", err)
         .with_primary_label(&lex.span(), err.to_string().replace("target type", "boolean"))))]
@@ -62,11 +59,11 @@ pub enum Token {
     StrLiteral(String),
     #[regex("[a-zA-Z][a-zA-Z0-9_’']*", |lex| lex.slice().to_string())]
     Identifier(String),
+    /// There is a bug here where we won't catch MIN_INT - 1 as too small
     #[regex("[1-9][0-9]*|0", |lex| lex.slice().parse()
         .map_err(|err: ParseIntError| error!("illegal integer literal: {}", err)
         .with_primary_label(&lex.span(), err.to_string().replace("target type", "integer"))))]
-    Integer(i32),
-
+    Integer(u16),
     #[token("(")]
     LParen,
     #[token(")")]
@@ -79,7 +76,6 @@ pub enum Token {
     BlockOpen,
     #[token("}")]
     BlockClose,
-
     #[token("*")]
     OperatorMul,
     #[token("*>>")]
@@ -88,14 +84,12 @@ pub enum Token {
     OperatorDiv,
     #[token("%")]
     OperatorMod,
-
     #[token("!")]
     OperatorNot,
     #[token("-")]
     Minus,
     #[token("+")]
     OperatorAdd,
-
     #[token("==")]
     RelOpEq,
     #[token("!=")]
@@ -125,13 +119,11 @@ impl fmt::Display for Token {
             Token::KeywordReturn => write!(f, "return"),
             Token::KeywordInt => write!(f, "int"),
             Token::KeywordBool => write!(f, "bool"),
-
             Token::SemiColon => write!(f, ";"),
             Token::Discard => write!(f, "_"),
             Token::OfType => write!(f, ":"),
             Token::Assign => write!(f, "="),
             Token::Comma => write!(f, ","),
-
             Token::BoolLiteral(b) => write!(f, "{}", b),
             Token::StrLiteral(str) => write!(f, "string {}", str.escape_default()),
             Token::CharLiteral(ch) => {
@@ -145,23 +137,19 @@ impl fmt::Display for Token {
             }
             Token::Identifier(name) => write!(f, "id {}", name),
             Token::Integer(i) => write!(f, "integer {}", i),
-
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::LBracket => write!(f, "["),
             Token::RBracket => write!(f, "]"),
             Token::BlockOpen => write!(f, "{{"),
             Token::BlockClose => write!(f, "}}"),
-
             Token::OperatorMul => write!(f, "*"),
             Token::OperatorHighMul => write!(f, "*>>"),
             Token::OperatorDiv => write!(f, "/"),
             Token::OperatorMod => write!(f, "%"),
-
             Token::OperatorNot => write!(f, "!"),
             Token::Minus => write!(f, "-"),
             Token::OperatorAdd => write!(f, "+"),
-
             Token::RelOpEq => write!(f, "=="),
             Token::RelOpNeq => write!(f, "!="),
             Token::RelOpGr => write!(f, ">"),
@@ -175,6 +163,7 @@ impl fmt::Display for Token {
 }
 
 /// Escape codes get lexed into their actual string during lexing.
+/// Just note that this is formally part of parsing.
 /// Parsing does not need to worry about sanatizing string literals.
 /// Supports: \n \r \t \0 \\ \" \' and \x{...hex...}
 fn unescape_string<'s>(lex: &Lexer<'s>) -> Result<String, NoFileDiagnostic> {
