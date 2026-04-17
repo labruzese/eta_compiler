@@ -23,7 +23,7 @@ fn main() {
         let file = File::open(source).expect("failed to open file");
         let mut reader = BufReader::new(file);
         let mut buf = String::new();
-        reader.read_to_string(&mut buf);
+        let _ = reader.read_to_string(&mut buf);
 
         source_manager.add(
             source.to_str().expect("invalid unicode in file path"),
