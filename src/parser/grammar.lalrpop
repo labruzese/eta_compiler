@@ -1,0 +1,468 @@
+// Structure top-down:
+//   * `Program`                — use-decls + definitions (functions/globals)
+//   * `Definition`             — function OR global variable
+//   * `Type`                   — base type + sized dims + empty dims
+//   * `Block` + `Stmt`         — split into matched/unmatched forms to
+//                                handle dangling-else without conflicts
+//   * `IdentStartStmt`         — the `ident ...` statement family
+//                                (proc call / decl / assignment), factored
+//                                through `DeclTail` and `AssignTail` so the
+//                                common `ident` prefix is consumed once
+//   * `Expr`                   — LALRPOP precedence macros
+
+use crate::ast::*;
+use crate::lexer::Token;
+use crate::errors::NoFileDiagnostic;
+
+grammar;
+
+// ----------------------------------------------------------------------
+// Separator macros (right-recursive)
+// ----------------------------------------------------------------------
+
+// One or more T separated by `,`, NO trailing comma.
+CommaPlus<T>: Vec<T> = {
+    <e:T>                                      => vec![e],
+    <e:T> "," <mut rest:CommaPlus<T>>          => {
+        let mut v = Vec::with_capacity(rest.len() + 1);
+        v.push(e);
+        v.append(&mut rest);
+        v
+    },
+};
+
+// Zero or more T separated by `,`, NO trailing comma.
+Comma<T>: Vec<T> = {
+                                               => vec![],
+    <v:CommaPlus<T>>                           => v,
+};
+
+// Zero or more T separated by `,`, trailing comma permitted.
+// Deliberately does NOT reuse `CommaPlus<T>` to avoid conflicts.
+CommaTrailing<T>: Vec<T> = {
+                                               => vec![],
+    <v:CommaTrailingNonEmpty<T>>               => v,
+};
+
+CommaTrailingNonEmpty<T>: Vec<T> = {
+    <e:T>                                         => vec![e],
+    <e:T> ","                                     => vec![e],
+    <e:T> "," <mut rest:CommaTrailingNonEmpty<T>> => {
+        let mut v = Vec::with_capacity(rest.len() + 1);
+        v.push(e);
+        v.append(&mut rest);
+        v
+    },
+};
+
+// ----------------------------------------------------------------------
+// Token bindings
+// ----------------------------------------------------------------------
+extern {
+    type Location = usize;
+    type Error = NoFileDiagnostic;
+
+    enum Token {
+        "use"     => Token::KeywordUse,
+        "length"  => Token::KeywordLength,
+        "while"   => Token::KeywordWhile,
+        "if"      => Token::KeywordIf,
+        "else"    => Token::KeywordElse,
+        "return"  => Token::KeywordReturn,
+        "int"     => Token::KeywordInt,
+        "bool"    => Token::KeywordBool,
+
+        ";"       => Token::SemiColon,
+        "_"       => Token::Discard,
+        ":"       => Token::OfType,
+        "="       => Token::Assign,
+        ","       => Token::Comma,
+
+        "("       => Token::LParen,
+        ")"       => Token::RParen,
+        "["       => Token::LBracket,
+        "]"       => Token::RBracket,
+        "{"       => Token::BlockOpen,
+        "}"       => Token::BlockClose,
+
+        "*"       => Token::OperatorMul,
+        "*>>"     => Token::OperatorHighMul,
+        "/"       => Token::OperatorDiv,
+        "%"       => Token::OperatorMod,
+        "!"       => Token::OperatorNot,
+        "-"       => Token::Minus,
+        "+"       => Token::OperatorAdd,
+        "=="      => Token::RelOpEq,
+        "!="      => Token::RelOpNeq,
+        ">"       => Token::RelOpGr,
+        ">="      => Token::RelOpGe,
+        "<"       => Token::RelOpLt,
+        "<="      => Token::RelOpLe,
+        "&"       => Token::Land,
+        "|"       => Token::Lor,
+
+        "boollit" => Token::BoolLiteral(<bool>),
+        "charlit" => Token::CharLiteral(<u32>),
+        "strlit"  => Token::StrLiteral(<String>),
+        "ident"   => Token::Identifier(<String>),
+        "intlit"  => Token::Integer(<u64>),
+    }
+}
+
+// ----------------------------------------------------------------------
+// Top Level
+// ----------------------------------------------------------------------
+
+pub Program: Program = {
+    <uses: UseList> <definitions: Definition*> =>
+        Program::Prog { uses, definitions },
+};
+
+UseList: Vec<Use> = {
+                                           => vec![],
+    <u:Use> <rest:UseListTail>             => {
+        let mut v = vec![u];
+        v.extend(rest);
+        v
+    },
+};
+
+UseListTail: Vec<Use> = {
+                                           => vec![],
+    ";"                                    => vec![],
+    ";" <u:Use> <rest:UseListTail>         => {
+        let mut v = vec![u];
+        v.extend(rest);
+        v
+    },
+    <u:Use> <rest:UseListTail>             => {
+        let mut v = vec![u];
+        v.extend(rest);
+        v
+    },
+};
+
+Use: Use = {
+    "use" <id:"ident"> => Use::Id(id),
+};
+
+Definition: Definition = {
+    Method               => Definition::Method(<>),
+    <g:GlobDecl> ";"?    => Definition::GlobDecl(g),
+};
+
+// Spec: `id(params) : T1, T2 { ... }`.
+Method: Method = {
+    <id:"ident"> "(" <params:Comma<Decl>> ")"
+        <ret:(":" <CommaPlus<Type>>)?> <body:Block> =>
+        Method::Method {
+            id,
+            params,
+            ret_types: ret.unwrap_or_default(),
+            body,
+        },
+};
+
+// Globals can be initialised to an integer literal (possibly
+// negated) or a boolean literal. Array globals cannot be initialised.
+GlobDecl: GlobDecl = {
+    <id:"ident"> ":" <typ:Type> <val:("=" <GlobalValue>)?> =>
+        GlobDecl::GlobDecl { id, typ, val },
+};
+
+GlobalValue: Value = {
+    <neg:"-"?> <n:"intlit"> =>
+        Value::IntLit(if neg.is_some() { -(n as i128) } else { n as i128 }),
+    <b:"boollit"> => Value::BoolLit(b),
+};
+
+Decl: Decl = {
+    <id:"ident"> ":" <typ:Type> => Decl::Decl { id, typ },
+};
+
+// A type is a base type followed by zero or more dimensions. Each
+// dimension is either sized (`[expr]`) or empty (`[]`). The "no sized
+// dim after an empty dim" rule is checked in semantic analysis where we
+// can emit a decent diagnostic.
+Type: Type = {
+    <base:BaseType> <dims:TypeDim*> => {
+        let empty_dims = dims.iter().filter(|d| d.is_none()).count() as u32;
+        let static_dims = dims.into_iter().flatten().collect();
+        Type::Type { base, static_dims, empty_dims }
+    },
+};
+
+TypeDim: Option<Expr> = {
+    "[" <e:Expr?> "]" => e,
+};
+
+BaseType: BaseType = {
+    "int"  => BaseType::Int,
+    "bool" => BaseType::Bool,
+};
+
+// A block is `{ stmt; stmt; ...; ret?; }`. `return` must be the LAST
+// statement in the enclosing block. `;` is required between adjacent
+// statements; a trailing `;` before `}` is permitted.
+Block: Block = {
+    "{" <stmts:BlockStmts> "}" => Block::Block { stmts },
+};
+
+// Block body: 0+ regular stmts, optionally ending in a `ReturnStmt`,
+// each separated by `;`. Trailing `;` permitted.
+BlockStmts: Vec<Stmt> = {
+                                                  => vec![],
+    <r:ReturnStmt> ";"?                           => vec![Stmt::ReturnStmt(r)],
+    <s:Stmt> <rest:BlockStmtsAfter>               => {
+        let mut v = vec![s];
+        v.extend(rest);
+        v
+    },
+};
+
+BlockStmtsAfter: Vec<Stmt> = {
+                                                  => vec![],
+    ";"                                           => vec![],
+    ";" <r:ReturnStmt> ";"?                       => vec![Stmt::ReturnStmt(r)],
+    ";" <s:Stmt> <rest:BlockStmtsAfter>           => {
+        let mut v = vec![s];
+        v.extend(rest);
+        v
+    },
+};
+
+ReturnStmt: ReturnStmt = {
+    "return" <values:Comma<Expr>> => ReturnStmt::ReturnStmt { values },
+};
+
+// A statement is either "closed" (all its trailing `if`s have an `else`) or
+// "open" (there's an `if` with no matching `else`). The only place an
+// `else` may attach is the innermost unmatched `if`, so we forbid the
+// inner stmt of `if ... else <inner>` and `while <body>` from being an
+// open statement when we're looking at the head of an else branch.
+Stmt: Stmt = { ClosedStmt, OpenStmt };
+
+OpenStmt: Stmt = {
+    "if" <cond:Expr> <then:Stmt> =>
+        Stmt::IfStmt(IfStmt::IfStmt {
+            cond, then_branch: Box::new(then), else_branch: None,
+        }),
+    "if" <cond:Expr> <then:ClosedStmt> "else" <els:OpenStmt> =>
+        Stmt::IfStmt(IfStmt::IfStmt {
+            cond,
+            then_branch: Box::new(then),
+            else_branch: Some(Box::new(els)),
+        }),
+    "while" <cond:Expr> <body:OpenStmt> =>
+        Stmt::WhileStmt(WhileStmt::WhileStmt { cond, body: Box::new(body) }),
+};
+
+ClosedStmt: Stmt = {
+    "if" <cond:Expr> <then:ClosedStmt> "else" <els:ClosedStmt> =>
+        Stmt::IfStmt(IfStmt::IfStmt {
+            cond,
+            then_branch: Box::new(then),
+            else_branch: Some(Box::new(els)),
+        }),
+    "while" <cond:Expr> <body:ClosedStmt> =>
+        Stmt::WhileStmt(WhileStmt::WhileStmt { cond, body: Box::new(body) }),
+    SimpleStmt,
+};
+
+SimpleStmt: Stmt = {
+    <b:Block>          => Stmt::Block(b),
+    IdentStartStmt,
+    UnderscoreStmt,
+};
+
+// ---------------------------------------------------------------------------
+// Statements beginning with an identifier
+//
+// Disambiguate on the token following `ident`:
+//   `(`            -> procedure call
+//   `:`            -> decl target (possibly followed by `,`-list and `= RHS`)
+//   `[`, `,`, `=`  -> id target (with optional indices, then `,`-list, then `= RHS`)
+//
+// `DeclTail` = everything that may follow `ident : Type`:
+//   `` | `=` CommaPlus<Expr> | `,` AssignLeft ... (optionally `= RHS`)
+//
+// `AssignTail` = everything that may follow an `ident` / `ident Index+` /
+// `_` target when no `:` was seen. An `=` RHS is mandatory here because
+// a bare id target alone is not a statement.
+// ---------------------------------------------------------------------------
+
+IdentStartStmt: Stmt = {
+    // f(x, y, z)
+    <id:"ident"> "(" <args:Comma<Expr>> ")" =>
+        Stmt::ProcCall(ProcCall::ProcCall { id, args }),
+
+    // x:int                    (pure decl, `rhs` = None)
+    // x:int, y:int             (multi-decl, `rhs` = None)
+    // x:int = e                (single-decl assignment)
+    // x:int, y:int = e1, e2    (multi-decl assignment)
+    // x:int, y     = f(a)      (mixed decl + var in LHS)
+    //
+    // OVER-ACCEPT: when `rhs` is None, non-decl targets (id, ignore) are
+    // not valid — e.g. `x:int, y` without `=` is rejected semantically.
+    <id:"ident"> ":" <typ:Type> <rest:DeclTail> => {
+        let head = AssignLeft::Decl(Decl::Decl { id, typ });
+        let (tail, rhs) = rest;
+        let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
+        match rhs {
+            Some(values) => Stmt::Assignment(Assignment::Assignment { targets, values }),
+            None => Stmt::Decls {
+                decls: targets.into_iter().filter_map(|t| match t {
+                    AssignLeft::Decl(d) => Some(d),
+                    _ => None,
+                }).collect(),
+            },
+        }
+    },
+
+    // x = e                      (no leading indices)
+    // x, y = e1, e2
+    // x, y:bool = f(a)
+    <id:"ident"> <rest:AssignTail> => {
+        let head = AssignLeft::Id { id, indices: vec![] };
+        let (tail, values) = rest;
+        let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
+        Stmt::Assignment(Assignment::Assignment { targets, values })
+    },
+
+    // x[i] = e                   (with leading indices)
+    // x[i][j], y = e1, e2
+    <id:"ident"> <indices:Index+> <rest:AssignTail> => {
+        let head = AssignLeft::Id { id, indices };
+        let (tail, values) = rest;
+        let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
+        Stmt::Assignment(Assignment::Assignment { targets, values })
+    },
+};
+
+UnderscoreStmt: Stmt = {
+    "_" <rest:AssignTail> => {
+        let (tail, values) = rest;
+        let targets: Vec<_> = std::iter::once(AssignLeft::Ignore).chain(tail).collect();
+        Stmt::Assignment(Assignment::Assignment { targets, values })
+    },
+};
+
+// DeclTail returns (remaining LHS targets, optional RHS values).
+//   ""                                        -> (vec![], None)
+//   "=" CommaPlus<Expr>                       -> (vec![], Some(values))
+//   ("," AssignLeft)+                         -> (tail, None)
+//   ("," AssignLeft)+ "=" CommaPlus<Expr>     -> (tail, Some(values))
+DeclTail: (Vec<AssignLeft>, Option<Vec<Expr>>) = {
+                                                 => (vec![], None),
+    "=" <values:CommaPlus<Expr>>                 => (vec![], Some(values)),
+    "," <first:AssignLeft> <rest:DeclTail>       => {
+        let (mut ts, rhs) = rest;
+        ts.insert(0, first);
+        (ts, rhs)
+    },
+};
+
+// AssignTail returns (remaining LHS targets, RHS values). The `=` is
+// mandatory because a bare id-target isn't a valid stand-alone statement.
+//   "=" CommaPlus<Expr>
+//   ("," AssignLeft)+ "=" CommaPlus<Expr>
+AssignTail: (Vec<AssignLeft>, Vec<Expr>) = {
+    "=" <values:CommaPlus<Expr>>                 => (vec![], values),
+    "," <first:AssignLeft> <rest:AssignTail>     => {
+        let (mut ts, values) = rest;
+        ts.insert(0, first);
+        (ts, values)
+    },
+};
+
+// Assignment targets that may follow the first one in a `,`-list.
+AssignLeft: AssignLeft = {
+    <id:"ident"> ":" <typ:Type>   => AssignLeft::Decl(Decl::Decl { id, typ }),
+    <id:"ident"> <indices:Index+> => AssignLeft::Id { id, indices },
+    <id:"ident">                  => AssignLeft::Id { id, indices: vec![] },
+    "_"                           => AssignLeft::Ignore,
+};
+
+Index: Expr = { "[" <Expr> "]" };
+
+// ---------------------------------------------------------------------------
+// Expressions
+//
+// Operator-tag rules (`MulOp`, `AddOp`, ...) lift the BinOp mapping out
+// of the precedence table so each precedence level is a single line.
+// #[inline] keeps these out of the parse table as separate states.
+// ---------------------------------------------------------------------------
+
+#[inline] UnaryOp: UOp = { "-" => UOp::Neg, "!" => UOp::Not };
+
+#[inline] MulOp: BinOp = {
+    "*"   => BinOp::Mul,
+    "*>>" => BinOp::HighMul,
+    "/"   => BinOp::Div,
+    "%"   => BinOp::Mod,
+};
+
+#[inline] AddOp: BinOp = { "+" => BinOp::Add, "-" => BinOp::Sub };
+
+#[inline] RelOp: BinOp = {
+    "<"  => BinOp::Lt, "<=" => BinOp::Le,
+    ">"  => BinOp::Gt, ">=" => BinOp::Ge,
+};
+
+#[inline] EqOp: BinOp = { "==" => BinOp::Eq, "!=" => BinOp::Neq };
+
+Expr: Expr = {
+    #[precedence(level="0")] Primary,
+
+    #[precedence(level="1")]
+    <op:UnaryOp> <e:Expr> => Expr::Unary { op, expr: Box::new(e) },
+
+    #[precedence(level="2")] #[assoc(side="left")]
+    <l:Expr> <op:MulOp> <r:Expr> =>
+        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+
+    #[precedence(level="3")] #[assoc(side="left")]
+    <l:Expr> <op:AddOp> <r:Expr> =>
+        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+
+    #[precedence(level="4")] #[assoc(side="left")]
+    <l:Expr> <op:RelOp> <r:Expr> =>
+        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+
+    #[precedence(level="5")] #[assoc(side="left")]
+    <l:Expr> <op:EqOp> <r:Expr> =>
+        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+
+    #[precedence(level="6")] #[assoc(side="left")]
+    <l:Expr> "&" <r:Expr> =>
+        Expr::Binary { op: BinOp::And, left: Box::new(l), right: Box::new(r) },
+
+    #[precedence(level="7")] #[assoc(side="left")]
+    <l:Expr> "|" <r:Expr> =>
+        Expr::Binary { op: BinOp::Or, left: Box::new(l), right: Box::new(r) },
+};
+
+// Primary: atoms, postfix indexing, parens.
+//
+// Left-recursive in `Primary` for postfix `[]`, which attaches tighter than
+// any binary or unary operator. Function calls and `length(...)` stay at
+// the atom level because they take identifiers/keywords as heads, you
+// cannot write `(f)(x)` or `length[0]`.
+Primary: Expr = {
+    <l:Lit>                                 => Expr::Lit(l),
+    <id:"ident">                            => Expr::Id(id),
+    <id:"ident"> "(" <args:Comma<Expr>> ")" => Expr::Call(ProcCall::ProcCall { id, args }),
+    "length" "(" <e:Expr> ")"               => Expr::Length(Box::new(e)),
+    "(" <Expr> ")",
+    <arr:Primary> "[" <i:Expr> "]"          =>
+        Expr::Index { array: Box::new(arr), index: Box::new(i) },
+};
+
+Lit: Lit = {
+    <n:"intlit">  => Lit::IntLit(n as i128),
+    <b:"boollit"> => Lit::BoolLit(b),
+    <c:"charlit"> => Lit::CharLit(char::from_u32(c).unwrap_or('\u{FFFD}')),
+    <s:"strlit">  => Lit::ArrLit(ArrLit::StringLit(s)),
+    // Array constructor; trailing comma permitted.
+    "{" <exprs:CommaTrailing<Expr>> "}" => Lit::ArrLit(ArrLit::Array(exprs)),
+};

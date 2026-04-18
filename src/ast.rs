@@ -1,10 +1,11 @@
+use std::fmt::Debug;
+
 pub type Id = String;
-pub type IntLit = i64;
+pub type IntLit = i128;
 pub type BoolLit = bool;
 pub type CharLit = char;
-pub type StringLit = String;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Program {
     Prog {
         uses: Vec<Use>,
@@ -12,18 +13,18 @@ pub enum Program {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Use {
     Id(Id),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Definition {
     Method(Method),
     GlobDecl(GlobDecl),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Method {
     Method {
         id: Id,
@@ -33,7 +34,7 @@ pub enum Method {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum GlobDecl {
     GlobDecl {
         id: Id,
@@ -42,38 +43,38 @@ pub enum GlobDecl {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
     IntLit(IntLit),
     BoolLit(BoolLit),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Decl {
     Decl { id: Id, typ: Type },
 }
 
-#[derive(Debug)]
-pub enum Block {
-    Block { stmts: Vec<Stmt> },
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Type {
         base: BaseType,
-        static_dims: Vec<u32>, // const_f_arr* — integer literals only
-        empty_dims: u32,       // count of e_arr ([]) markers
+        static_dims: Vec<Expr>,
+        empty_dims: u32,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BaseType {
     Int,
     Bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum Block {
+    Block { stmts: Vec<Stmt> },
+}
+
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Assignment(Assignment),
     IfStmt(IfStmt),
@@ -81,27 +82,25 @@ pub enum Stmt {
     ReturnStmt(ReturnStmt),
     ProcCall(ProcCall),
     Block(Block),
-    Decls {
-        decls: Vec<Decl>,
-        assignment: Option<Expr>,
-    },
+    Decls { decls: Vec<Decl> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Assignment {
     Assignment {
         targets: Vec<AssignLeft>,
-        value: Expr,
+        values: Vec<Expr>,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AssignLeft {
-    Id { id: Id, indices: Vec<Expr> }, // indices may be empty
-    Ignore,                             // `_`
+    Id { id: Id, indices: Vec<Expr> },
+    Decl(Decl),
+    Ignore,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IfStmt {
     IfStmt {
         cond: Expr,
@@ -110,7 +109,7 @@ pub enum IfStmt {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WhileStmt {
     WhileStmt {
         cond: Expr,
@@ -118,27 +117,62 @@ pub enum WhileStmt {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ReturnStmt {
-    ReturnStmt { values: Vec<Expr> }, // empty Vec represents bare `return`
+    ReturnStmt { values: Vec<Expr> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProcCall {
     ProcCall { id: Id, args: Vec<Expr> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Id(Id),
     Lit(Lit),
-    Index { id: Id, indices: Vec<Expr> },  // from postfix_expr with dyn_f_arr+
-    Call(ProcCall),                        // func_call == proc_call shape
-    Unary { op: UOp, expr: Box<Expr> },
-    Binary { op: BinOp, left: Box<Expr>, right: Box<Expr> },
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
+    },
+    Call(ProcCall),
+    Length(Box<Expr>),
+    Unary {
+        op: UOp,
+        expr: Box<Expr>,
+    },
+    Binary {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+pub enum UOp {
+    Neg,
+    Not,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    HighMul,
+    Div,
+    Mod,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone)]
 pub enum Lit {
     IntLit(IntLit),
     BoolLit(BoolLit),
@@ -146,21 +180,8 @@ pub enum Lit {
     ArrLit(ArrLit),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ArrLit {
+    StringLit(String),
     Array(Vec<Expr>),
-    StringLit(StringLit),
-}
-
-#[derive(Debug)]
-pub enum UOp {
-    Neg, // -
-    Not, // !
-}
-
-#[derive(Debug)]
-pub enum BinOp {
-    Add, Sub, Mul, Div, Mod,
-    Eq, Neq, Lt, Gt, Le, Ge,
-    And, Or,
 }

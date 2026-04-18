@@ -1,9 +1,9 @@
 use logos::Logos;
-use std::{fmt, num::ParseIntError, str::ParseBoolError};
+use std::{fmt, num::ParseIntError};
 
 use crate::{
     error,
-    errors::{self, NoFileDiagnostic},
+    errors::{NoFileDiagnostic},
 };
 
 impl NoFileDiagnostic {
@@ -15,14 +15,12 @@ impl NoFileDiagnostic {
 
 pub type Lexer<'input> = logos::Lexer<'input, Token>;
 
-#[derive(Logos, Clone, Debug, PartialEq)]
-#[logos(
-    skip r"[ \t\n\f]+", // whitespace
-    skip r"//.*\n?", // // comments
-    skip r"/\*([^*]|\*[^/])*\*/", // /* comments */ 
-)]
-#[logos(error(errors::NoFileDiagnostic, NoFileDiagnostic::from_lexer))]
+#[derive(Debug, Clone, PartialEq, Logos)]
+#[logos(skip r"[ \t\n\f\r]+")]
+#[logos(skip r"//[^\n]*")]
+#[logos(error(NoFileDiagnostic, NoFileDiagnostic::from_lexer))]
 pub enum Token {
+    // Keywords
     #[token("use")]
     KeywordUse,
     #[token("length")]
@@ -39,6 +37,8 @@ pub enum Token {
     KeywordInt,
     #[token("bool")]
     KeywordBool,
+
+    // Punctuation
     #[token(";")]
     SemiColon,
     #[token("_")]
@@ -49,21 +49,24 @@ pub enum Token {
     Assign,
     #[token(",")]
     Comma,
-    #[regex("true|false", |lex| lex.slice().parse()
-        .map_err(|err: ParseBoolError| error!("illegal boolean literal: {}", err)
-        .with_primary_label(&lex.span(), err.to_string().replace("target type", "boolean"))))]
+
+    #[token("true", |_| true)]
+    #[token("false", |_| false)]
     BoolLiteral(bool),
-    #[regex(r#"'([^'\\]|\\.)?'"#, parse_char)]
+
+    #[regex(r"'([^'\\]|\\(.|x\{[0-9A-Fa-f]{1,6}\}))'", parse_char)]
     CharLiteral(u32),
-    #[regex(r#""([^"\\]|\\.)*""#, unescape_string)]
+
+    #[regex(r#""([^"\\]|\\(.|x\{[0-9A-Fa-f]{1,6}\}))*""#, parse_str)]
     StrLiteral(String),
-    #[regex("[a-zA-Z][a-zA-Z0-9_’']*", |lex| lex.slice().to_string())]
+
+    #[regex(r"[a-zA-Z][a-zA-Z0-9_']*", |lex| lex.slice().to_string())]
     Identifier(String),
-    /// There is a bug here where we won't catch MIN_INT - 1 as too small
-    #[regex("[1-9][0-9]*|0", |lex| lex.slice().parse()
-        .map_err(|err: ParseIntError| error!("illegal integer literal: {}", err)
-        .with_primary_label(&lex.span(), err.to_string().replace("target type", "integer"))))]
-    Integer(u16),
+
+    #[regex(r"[1-9][0-9]*|0", parse_int)]
+    Integer(u64),
+
+    // Brackets and braces
     #[token("(")]
     LParen,
     #[token(")")]
@@ -76,6 +79,8 @@ pub enum Token {
     BlockOpen,
     #[token("}")]
     BlockClose,
+
+    // Arithmetic operators
     #[token("*")]
     OperatorMul,
     #[token("*>>")]
@@ -90,6 +95,8 @@ pub enum Token {
     Minus,
     #[token("+")]
     OperatorAdd,
+
+    // Relational operators
     #[token("==")]
     RelOpEq,
     #[token("!=")]
@@ -102,10 +109,139 @@ pub enum Token {
     RelOpLt,
     #[token("<=")]
     RelOpLe,
+
+    // Logical operators
     #[token("&")]
     Land,
     #[token("|")]
     Lor,
+}
+
+// Callbacks
+
+fn parse_int(lex: &mut Lexer) -> Result<u64, NoFileDiagnostic> {
+    lex.slice().parse::<u64>().map_err(|err: ParseIntError| {
+        error!("illegal integer literal: {}", err).with_primary_label(
+            &lex.span(),
+            err.to_string().replace("number too extreme to fit in target type", "integer out of range"),
+        )
+    })
+}
+
+/// Parse a char literal of the form `'c'`, `'\\c'`, or `'\\x{HHHHHH}'`.
+/// The surrounding quotes are stripped by this function.
+fn parse_char(lex: &mut Lexer) -> Result<u32, NoFileDiagnostic> {
+    let raw = lex.slice();
+    // Strip surrounding quotes.
+    let inner = &raw[1..raw.len() - 1];
+    decode_char_content(inner).ok_or_else(|| {
+        error!("invalid character literal: {}", raw)
+            .with_primary_label(&lex.span(), format!("cannot decode {}", raw))
+    })
+}
+
+/// Parse a string literal of the form `"..."`. Individual character escapes
+/// are validated; invalid ones produce a diagnostic.
+fn parse_str(lex: &mut Lexer) -> Result<String, NoFileDiagnostic> {
+    let raw = lex.slice();
+    let inner = &raw[1..raw.len() - 1];
+    let mut out = String::with_capacity(inner.len());
+    let mut it = inner.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        // Escape.
+        let esc = it.next().ok_or_else(|| {
+            error!("unterminated escape in string literal")
+                .with_primary_label(&lex.span(), "dangling backslash")
+        })?;
+        match esc {
+            'n' => out.push('\n'),
+            't' => out.push('\t'),
+            'r' => out.push('\r'),
+            '\\' => out.push('\\'),
+            '\'' => out.push('\''),
+            '"' => out.push('"'),
+            '0' => out.push('\0'),
+            'x' => {
+                // \x{HHHHHH}
+                if it.next() != Some('{') {
+                    return Err(error!("malformed unicode escape")
+                        .with_primary_label(&lex.span(), "expected `{` after `\\x`"));
+                }
+                let mut hex = String::new();
+                loop {
+                    match it.next() {
+                        Some('}') => break,
+                        Some(h) if h.is_ascii_hexdigit() => hex.push(h),
+                        _ => {
+                            return Err(error!("malformed unicode escape")
+                                .with_primary_label(&lex.span(), "expected hex digits and `}`"))
+                        }
+                    }
+                }
+                let codepoint = u32::from_str_radix(&hex, 16).map_err(|e| {
+                    error!("invalid unicode escape: {}", e)
+                        .with_primary_label(&lex.span(), e.to_string())
+                })?;
+                if let Some(ch) = char::from_u32(codepoint) {
+                    out.push(ch);
+                } else {
+                    return Err(error!("invalid unicode codepoint: U+{:X}", codepoint)
+                        .with_primary_label(&lex.span(), "not a valid unicode scalar"));
+                }
+            }
+            other => {
+                return Err(error!("unknown escape: \\{}", other)
+                    .with_primary_label(&lex.span(), format!("unknown escape: \\{}", other)))
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Decode the inside of a char literal (no surrounding quotes) into a
+/// Unicode scalar value. Returns `None` on malformed input.
+fn decode_char_content(inner: &str) -> Option<u32> {
+    let mut chars = inner.chars();
+    let first = chars.next()?;
+    if first != '\\' {
+        // Single character literal.
+        if chars.next().is_some() {
+            return None;
+        }
+        return Some(first as u32);
+    }
+    let esc = chars.next()?;
+    match esc {
+        'n' => Some('\n' as u32),
+        't' => Some('\t' as u32),
+        'r' => Some('\r' as u32),
+        '\\' => Some('\\' as u32),
+        '\'' => Some('\'' as u32),
+        '"' => Some('"' as u32),
+        '0' => Some(0),
+        'x' => {
+            if chars.next()? != '{' {
+                return None;
+            }
+            let mut hex = String::new();
+            loop {
+                match chars.next()? {
+                    '}' => break,
+                    h if h.is_ascii_hexdigit() => hex.push(h),
+                    _ => return None,
+                }
+            }
+            if chars.next().is_some() {
+                return None;
+            }
+            u32::from_str_radix(&hex, 16).ok()
+        }
+        _ => None,
+    }
 }
 
 impl fmt::Display for Token {
@@ -125,18 +261,10 @@ impl fmt::Display for Token {
             Token::Assign => write!(f, "="),
             Token::Comma => write!(f, ","),
             Token::BoolLiteral(b) => write!(f, "{}", b),
-            Token::StrLiteral(str) => write!(f, "string {}", str.escape_default()),
-            Token::CharLiteral(ch) => {
-                write!(
-                    f,
-                    "character {}",
-                    char::from_u32(*ch)
-                        .expect("later me problem")
-                        .escape_default()
-                )
-            }
-            Token::Identifier(name) => write!(f, "id {}", name),
-            Token::Integer(i) => write!(f, "integer {}", i),
+            Token::CharLiteral(c) => write!(f, "character {}", c),
+            Token::StrLiteral(s) => write!(f, "string \"{}\"", s),
+            Token::Identifier(s) => write!(f, "id {}", s),
+            Token::Integer(n) => write!(f, "integer {}", n),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::LBracket => write!(f, "["),
@@ -159,128 +287,5 @@ impl fmt::Display for Token {
             Token::Land => write!(f, "&"),
             Token::Lor => write!(f, "|"),
         }
-    }
-}
-
-/// Escape codes get lexed into their actual string during lexing.
-/// Just note that this is formally part of parsing.
-/// Parsing does not need to worry about sanatizing string literals.
-/// Supports: \n \r \t \0 \\ \" \' and \x{...hex...}
-fn unescape_string<'s>(lex: &Lexer<'s>) -> Result<String, NoFileDiagnostic> {
-    let span = lex.span();
-    let s = lex.slice();
-    let s = &s[1..s.len() - 1]; //shadow
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-
-        // Handle escape
-        let esc = chars.next().ok_or(
-            error!("trailing backslash in escape").with_primary_label(&span, "in this string"),
-        )?;
-        match esc {
-            'n' => out.push('\n'),
-            'r' => out.push('\r'),
-            't' => out.push('\t'),
-            '0' => out.push('\0'),
-            '\\' => out.push('\\'),
-            '"' => out.push('"'),
-            '\'' => out.push('\''),
-            'x' => {
-                // Expect \x{...hex...}
-                if chars.next() != Some('{') {
-                    return Err(NoFileDiagnostic::error("expected {...} after \\x")
-                        .with_primary_label(&span, "in this string"));
-                }
-                let mut hex = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c == '}' {
-                        chars.next();
-                        break;
-                    }
-                    hex.push(c);
-                    chars.next();
-                }
-                if hex.is_empty() {
-                    return Err(NoFileDiagnostic::error("empty unicode codepoint in \\x{}")
-                        .with_primary_label(&span, "in this string"));
-                }
-                let code = u32::from_str_radix(hex.trim(), 16).map_err(|_| {
-                    NoFileDiagnostic::error("invalid hex in \\x{...}")
-                        .with_primary_label(&span, "in this string")
-                })?;
-                let ch = char::from_u32(code).ok_or(
-                    NoFileDiagnostic::error("invalid Unicode scalar value")
-                        .with_primary_label(&span, "in this string"),
-                )?;
-                out.push(ch);
-            }
-            other => {
-                return Err(
-                    error!("unknown escape: {}", other).with_primary_label(&span, "in this string")
-                );
-            }
-        }
-    }
-
-    Ok(out)
-}
-
-fn parse_char<'s>(lex: &Lexer<'s>) -> Result<u32, NoFileDiagnostic> {
-    let span = lex.span();
-    let s = lex.slice();
-    let s = &s[1..s.len() - 1]; //shadow
-    if s.is_empty() {
-        return Err(
-            NoFileDiagnostic::error("empty character literal").with_primary_label(&span, "here")
-        );
-    }
-    if s.len() == 1 {
-        return Ok(s.chars().next().expect("") as u32);
-    }
-    match s {
-        "\\n" => Ok('\n' as u32),
-        "\\r" => Ok('\r' as u32),
-        "\\t" => Ok('\t' as u32),
-        "\\0" => Ok('\0' as u32),
-        "\\\\" => Ok('\\' as u32),
-        "\\\"" => Ok('\"' as u32),
-        "\\\'" => Ok('\'' as u32),
-        "\\x" => {
-            let mut chars = s.chars().skip(2).peekable();
-            // Expect \x{...hex...}
-            if chars.next() != Some('{') {
-                return Err(NoFileDiagnostic::error("expected {...} after \\x")
-                    .with_primary_label(&span, "in this char"));
-            }
-            let mut hex = String::new();
-            while let Some(&c) = chars.peek() {
-                if c == '}' {
-                    chars.next();
-                    break;
-                }
-                hex.push(c);
-                chars.next();
-            }
-            if hex.is_empty() {
-                return Err(NoFileDiagnostic::error("empty unicode codepoint in \\x{}")
-                    .with_primary_label(&span, "in this char"));
-            }
-            let code = u32::from_str_radix(hex.trim(), 16).map_err(|_| {
-                NoFileDiagnostic::error("invalid hex in \\x{...}")
-                    .with_primary_label(&span, "in this char")
-            })?;
-            let ch = char::from_u32(code).ok_or(
-                NoFileDiagnostic::error("invalid Unicode scalar value")
-                    .with_primary_label(&span, "in this char"),
-            )?;
-            Ok(ch as u32)
-        }
-        _ => Err(NoFileDiagnostic::error("invalid char").with_primary_label(&span, "this char")),
     }
 }
