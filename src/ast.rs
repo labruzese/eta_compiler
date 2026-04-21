@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+mod printer;
+
 pub type Id = String;
 pub type IntLit = i128;
 pub type BoolLit = bool;
@@ -56,15 +58,8 @@ pub enum Decl {
 
 #[derive(Debug, Clone)]
 pub enum Type {
-    Type {
-        base: BaseType,
-        static_dims: Vec<Expr>,
-        empty_dims: u32,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum BaseType {
+    SizedArray { of: Box<Type>, size: Expr },
+    UnsizedArray { of: Box<Type> },
     Int,
     Bool,
 }
@@ -95,9 +90,15 @@ pub enum Assignment {
 
 #[derive(Debug, Clone)]
 pub enum AssignLeft {
-    Id { id: Id, indices: Vec<Expr> },
+    Var(Var),
     Decl(Decl),
     Ignore,
+}
+
+#[derive(Debug, Clone)]
+pub enum Var {
+    Index { of: Box<Var>, index: Expr },
+    Id(Id),
 }
 
 #[derive(Debug, Clone)]

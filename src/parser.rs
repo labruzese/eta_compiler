@@ -17,17 +17,22 @@ pub fn parse<'a>(source: &'a EtaSource) -> Result<ast::Program, Vec<Diagnostic<'
     // make some writer for verbose lexing if flag is set
     let mut logger = Logger::new(options, source.name.clone(), source.source.clone());
 
-    let tokens = lexer.map(|(tok, span)| match tok {
-        Ok(t) => {
-            logger.log_token(span.start, span.end, &t);
-            Ok((span.start, t, span.end))
-        }
-        Err(d) => {
-            logger.log_lexical_error(span.start, span.end, &d.message);
-            Err(d)
-        }
-    });
+    // lex (unfortunately we can't stream the lexer since we need to complete lexing even if parsing
+    // fails)
+    let tokens: Vec<Result<(usize, Token, usize), NoFileDiagnostic>> = lexer
+        .map(|(tok, span)| match tok {
+            Ok(t) => {
+                logger.log_token(span.start, span.end, &t);
+                Ok((span.start, t, span.end))
+            }
+            Err(d) => {
+                logger.log_lexical_error(span.start, span.end, &d.message);
+                Err(d)
+            }
+        })
+    .collect();
 
+    // parse
     let mut recovered: Vec<lalrpop_util::ErrorRecovery<usize, Token, NoFileDiagnostic>> =
         Vec::new();
     let result = grammar::ProgramParser::new().parse(&mut recovered, tokens);
@@ -38,12 +43,21 @@ pub fn parse<'a>(source: &'a EtaSource) -> Result<ast::Program, Vec<Diagnostic<'
             .into_iter()
             .map(|r| to_diag(r.error).specify_file(&source.name))
             .collect();
+
         if let Err(e) = result {
             errors.push(to_diag(e).specify_file(&source.name));
         }
+
+        for err in errors.iter() {
+            logger.log_syntatic_error(err.loc.range.start, err.loc.range.end, &err.message);
+        }
+
         return Err(errors);
     }
-    Ok(result.unwrap())
+
+    let program = result.unwrap();
+    logger.log_parse(&program);
+    Ok(program)
 }
 
 fn to_diag(err: ParseError<usize, Token, NoFileDiagnostic>) -> NoFileDiagnostic {

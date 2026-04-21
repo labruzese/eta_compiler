@@ -187,9 +187,10 @@ Decl: Decl = {
 // can emit a decent diagnostic.
 Type: Type = {
     <base:BaseType> <dims:TypeDim*> => {
-        let empty_dims = dims.iter().filter(|d| d.is_none()).count() as u32;
-        let static_dims = dims.into_iter().flatten().collect();
-        Type::Type { base, static_dims, empty_dims }
+	dims.into_iter().rev().fold(base, |inner, d| match d {
+	    Some(e) => Type::SizedArray { of: Box::new(inner), size: e },
+	    None => Type::UnsizedArray { of: Box::new(inner) },
+	})
     },
 };
 
@@ -197,9 +198,9 @@ TypeDim: Option<Expr> = {
     "[" <e:Expr?> "]" => e,
 };
 
-BaseType: BaseType = {
-    "int"  => BaseType::Int,
-    "bool" => BaseType::Bool,
+BaseType: Type = {
+    "int"  => Type::Int,
+    "bool" => Type::Bool,
 };
 
 // A block is `{ stmt; stmt; ...; ret?; }`. `return` must be the LAST
@@ -214,7 +215,7 @@ Block: Block = {
 BlockStmts: Vec<Stmt> = {
                                                   => vec![],
     <r:ReturnStmt> ";"?                           => vec![Stmt::ReturnStmt(r)],
-    <s:Stmt> <rest:BlockStmtsAfter>               => {
+    <s:Stmt> ";"? <rest:BlockStmtsAfter>               => {
         let mut v = vec![s];
         v.extend(rest);
         v
@@ -223,9 +224,8 @@ BlockStmts: Vec<Stmt> = {
 
 BlockStmtsAfter: Vec<Stmt> = {
                                                   => vec![],
-    ";"                                           => vec![],
-    ";" <r:ReturnStmt> ";"?                       => vec![Stmt::ReturnStmt(r)],
-    ";" <s:Stmt> <rest:BlockStmtsAfter>           => {
+    <r:ReturnStmt> ";"?                      	  => vec![Stmt::ReturnStmt(r)],
+    <s:Stmt> ";"? <rest:BlockStmtsAfter>          => {
         let mut v = vec![s];
         v.extend(rest);
         v
@@ -320,20 +320,8 @@ IdentStartStmt: Stmt = {
         }
     },
 
-    // x = e                      (no leading indices)
-    // x, y = e1, e2
-    // x, y:bool = f(a)
-    <id:"ident"> <rest:AssignTail> => {
-        let head = AssignLeft::Id { id, indices: vec![] };
-        let (tail, values) = rest;
-        let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
-        Stmt::Assignment(Assignment::Assignment { targets, values })
-    },
-
-    // x[i] = e                   (with leading indices)
-    // x[i][j], y = e1, e2
-    <id:"ident"> <indices:Index+> <rest:AssignTail> => {
-        let head = AssignLeft::Id { id, indices };
+    <var:Var> <rest:AssignTail> => {
+	let head = AssignLeft::Var(var);
         let (tail, values) = rest;
         let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
         Stmt::Assignment(Assignment::Assignment { targets, values })
@@ -379,10 +367,18 @@ AssignTail: (Vec<AssignLeft>, Vec<Expr>) = {
 // Assignment targets that may follow the first one in a `,`-list.
 AssignLeft: AssignLeft = {
     <id:"ident"> ":" <typ:Type>   => AssignLeft::Decl(Decl::Decl { id, typ }),
-    <id:"ident"> <indices:Index+> => AssignLeft::Id { id, indices },
-    <id:"ident">                  => AssignLeft::Id { id, indices: vec![] },
+    <var:Var> 			  => AssignLeft::Var(var),
     "_"                           => AssignLeft::Ignore,
 };
+
+// a potentially indexed id
+Var: Var = {
+    <id:"ident"> <indices:Index*> => {
+	indices.into_iter().rev().fold(Var::Id(id), |inner, i|
+	     Var::Index { of: Box::new(inner), index: i }
+	)
+    },
+}
 
 Index: Expr = { "[" <Expr> "]" };
 

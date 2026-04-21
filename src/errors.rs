@@ -59,8 +59,8 @@ impl<'fid> ariadne::Span for EtaSpan<'fid> {
 
 impl SourceManager {
     /// the errors module gives SourceManager the ability to emit a diagnostic at a span
-    pub fn emit(&self, diag: Diagnostic, span: EtaSpan) {
-        let fid = span.file_id;
+    pub fn emit(&self, diag: Diagnostic, source: &FileId) {
+        let fid = source;
 
         let kind = match diag.level {
             Level::Error => ReportKind::Error,
@@ -68,7 +68,7 @@ impl SourceManager {
             Level::Note => ReportKind::Advice,
         };
 
-        let mut builder = Report::build(kind, span).with_message(diag.message);
+        let mut builder = Report::build(kind, diag.loc).with_message(diag.message);
 
         if let Some(code) = diag.code {
             builder = builder.with_code(code);
@@ -84,7 +84,7 @@ impl SourceManager {
         }
 
         // Print to stderr
-        if let Some(src) = self.get_source_str(fid) {
+        if let Some(src) = self.get_source_str(&fid) {
             let _ = builder.finish().eprint((fid, ariadne::Source::from(src)));
         }
     }

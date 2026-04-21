@@ -37,10 +37,6 @@ impl SourceManager {
         }
     }
 
-    pub fn ids(&self) -> impl Iterator<Item = &FileId> {
-        self.sources.keys()
-    }
-
     pub fn sources(&self) -> impl Iterator<Item = &EtaSource> {
         self.sources.values()
     }
@@ -54,20 +50,6 @@ impl SourceManager {
             .insert(FileId(name.clone()), EtaSource { name: FileId(name), source: src });
 
         id
-    }
-
-    /// id -> Borrow the file name
-    pub fn get_file_name(&self, id: &FileId) -> Option<&str> {
-        self.sources.get(id).map(|s| {
-            if let Some(n) = Path::new(s.name.0.as_str())
-                .file_stem()
-                .and_then(|x| x.to_str())
-            {
-                n
-            } else {
-                s.name.0.as_str()
-            }
-        })
     }
 
     /// id -> Get a new (rc) pointer to the source str

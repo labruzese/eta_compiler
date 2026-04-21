@@ -54,7 +54,7 @@ pub enum Token {
     #[token("false", |_| false)]
     BoolLiteral(bool),
 
-    #[regex(r"'([^'\\]|\\(.|x\{[0-9A-Fa-f]{1,6}\}))'", parse_char)]
+    #[regex(r"'([^'\\]|\\(.|x\{[0-9A-Fa-f]{1,6}\}))'|''", parse_char)]
     CharLiteral(u32),
 
     #[regex(r#""([^"\\]|\\(.|x\{[0-9A-Fa-f]{1,6}\}))*""#, parse_str)]
@@ -131,6 +131,9 @@ fn parse_int(lex: &mut Lexer) -> Result<u64, NoFileDiagnostic> {
 /// The surrounding quotes are stripped by this function.
 fn parse_char(lex: &mut Lexer) -> Result<u32, NoFileDiagnostic> {
     let raw = lex.slice();
+    if raw == "''" {
+        return Err(error!(lex.span(), "empty character literal").with_primary_label("here"))
+    };
     // Strip surrounding quotes.
     let inner = &raw[1..raw.len() - 1];
     decode_char_content(inner).ok_or_else(|| {
@@ -260,8 +263,8 @@ impl fmt::Display for Token {
             Token::Assign => write!(f, "="),
             Token::Comma => write!(f, ","),
             Token::BoolLiteral(b) => write!(f, "{}", b),
-            Token::CharLiteral(c) => write!(f, "character {}", c),
-            Token::StrLiteral(s) => write!(f, "string \"{}\"", s),
+            Token::CharLiteral(c) => write!(f, "character {}", char::from_u32(*c).expect("illegal char somehow lexed").escape_default()),
+            Token::StrLiteral(s) => write!(f, "string {}", s.escape_default()),
             Token::Identifier(s) => write!(f, "id {}", s),
             Token::Integer(n) => write!(f, "integer {}", n),
             Token::LParen => write!(f, "("),

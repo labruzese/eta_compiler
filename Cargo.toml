@@ -14,3 +14,4 @@ clap = { version = "4.5.53", features = ["derive"] }
 env_logger = "0.11.8"
 log = "0.4.29"
 logos = "0.16.0"
+pretty = "0.12.5"

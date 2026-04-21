@@ -33,6 +33,10 @@ fn main() {
     }
 
     for source in source_manager.sources() {
-        parser::parse(&source);
+        let res = parser::parse(&source);
+        match res {
+            Ok(_program) => (), //println!("{_program}"),
+            Err(diags) => diags.into_iter().for_each(|d| source_manager.emit(d, &source.name))
+        }
     }
 }
