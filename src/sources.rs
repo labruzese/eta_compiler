@@ -1,59 +1,36 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::fmt::{self, Display};
-use std::path::Path;
+use std::fmt;
 use std::rc::Rc;
 
-/// Span is a file and byte range
 mod span;
 pub use span::*;
 
-/// A unique identifier for a source file.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FileId(String);
+/// A file identifier. The inner `Rc<str>` is the filename/path — cheap to
+/// clone (refcount bump) and doubles as ariadne's cache key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FileId(Rc<str>);
+
+impl FileId {
+    pub fn new(name: impl Into<Rc<str>>) -> Self { Self(name.into()) }
+    pub fn as_str(&self) -> &str { &self.0 }
+}
 
 impl fmt::Display for FileId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
+        fmt::Display::fmt(&*self.0, f)
     }
 }
 
-/// Concrete struct where the source information lives
-pub struct EtaSource {
-    pub name: FileId,
-    pub source: Rc<str>,
-}
+/// Loader invoked by ariadne on cache miss. Default: read from disk,
+/// interpreting the `FileId` as a path. Returns `Rc<str>` so the source
+/// text is never copied again — ariadne's `Source<Rc<str>>` and your
+/// lexer/parser can share the same allocation.
+pub type SourceLoader = Box<dyn FnMut(&FileId) -> Result<Rc<str>, std::io::Error>>;
 
-/// Stores the source code and names for all files being compiled, to be indexed with FileId
-pub struct SourceManager {
-    /// Storage: EtaSource(File Name, Source Content)
-    sources: HashMap<FileId, EtaSource>,
-}
+pub type Sources = ariadne::FnCache<FileId, SourceLoader, Rc<str>>;
 
-impl SourceManager {
-    pub fn new() -> Self {
-        Self {
-            sources: HashMap::new(),
-        }
-    }
-
-    pub fn sources(&self) -> impl Iterator<Item = &EtaSource> {
-        self.sources.values()
-    }
-
-    /// Add a new source file to the manager.
-    pub fn add(&mut self, name: impl Into<String>, src: Rc<str>) -> FileId {
-        let name = name.into();
-
-        let id = FileId(name.clone());
-        self.sources
-            .insert(FileId(name.clone()), EtaSource { name: FileId(name), source: src });
-
-        id
-    }
-
-    /// id -> Get a new (rc) pointer to the source str
-    pub fn get_source_str(&self, id: &FileId) -> Option<Rc<str>> {
-        self.sources.get(id).map(|s| s.source.clone())
-    }
+/// A `Sources` that lazily reads files from disk on first access.
+pub fn sources_from_disk() -> Sources {
+    ariadne::FnCache::new(Box::new(|id: &FileId| {
+        std::fs::read_to_string(id.as_str()).map(Rc::from)
+    }))
 }

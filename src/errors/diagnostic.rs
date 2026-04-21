@@ -2,18 +2,18 @@
 use super::*;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Diagnostic<'fid> {
+pub struct Diagnostic {
     pub level: Level,
     pub code: Option<String>,
     pub message: String,
-    pub labels: Vec<(EtaSpan<'fid>, String, Color)>,
-    pub loc: EtaSpan<'fid>,
+    pub labels: Vec<(EtaSpan, String, Color)>,
+    pub loc: EtaSpan,
     pub note: Option<String>,
 }
 
 /// Diagnostic Builder except every state is valid so we don't need an explicit builder struct
-impl<'fid> Diagnostic<'fid> {
-    pub fn error(span: EtaSpan<'fid>, message: impl Into<String>) -> Self {
+impl Diagnostic {
+    pub fn error(span: EtaSpan, message: impl Into<String>) -> Self {
         Self {
             level: Level::Error,
             code: None,
@@ -24,7 +24,7 @@ impl<'fid> Diagnostic<'fid> {
         }
     }
 
-    pub fn warning(span: EtaSpan<'fid>, message: impl Into<String>) -> Self {
+    pub fn warning(span: EtaSpan, message: impl Into<String>) -> Self {
         Self {
             level: Level::Warning,
             code: None,
@@ -35,7 +35,7 @@ impl<'fid> Diagnostic<'fid> {
         }
     }
 
-    pub fn note(span: EtaSpan<'fid>, message: impl Into<String>) -> Self {
+    pub fn note(span: EtaSpan, message: impl Into<String>) -> Self {
         Self {
             level: Level::Note,
             code: None,
@@ -56,7 +56,7 @@ impl<'fid> Diagnostic<'fid> {
         self
     }
 
-    pub fn with_secondary_label(mut self, span: EtaSpan<'fid>, message: impl Into<String>) -> Self {
+    pub fn with_secondary_label(mut self, span: EtaSpan, message: impl Into<String>) -> Self {
         self.labels.push((span, message.into(), Color::Yellow));
         self
     }

@@ -1,59 +1,37 @@
 use crate::{ast, cli};
-use crate::sources::FileId;
-use std::fs::OpenOptions;
+use crate::sources::{EtaSpan, FileId, QualifiedName, Sources};
+use std::collections::HashMap;
 use std::io::{BufWriter, Write};
+use std::path::{PathBuf};
 use std::rc::Rc;
 
 /// Handles printing the lexer log if enabled
 pub struct Logger {
-    lexer_writer: Option<BufWriter<std::fs::File>>,
-    parser_writer: Option<BufWriter<std::fs::File>>,
+    lexer_writer: Option<HashMap<FileId, BufWriter<std::fs::File>>>,
+    parser_writer: Option<HashMap<FileId, BufWriter<std::fs::File>>>,
+    diag_root: PathBuf,
     /// Requirements: Resolver is some iff any writer is some
-    resolver: Option<ariadne::Source<Rc<str>>>,
+    resolver: Option<Rc<Sources>>,
 }
 
-impl Logger {
-    pub fn new(options: &cli::Flags, file_id: FileId, source: Rc<str>) -> Self {
-        let stem = std::path::Path::new(&file_id.to_string())
-            .file_stem()
-            .expect("source file has no file stem?")
-            .to_os_string();
-
+impl<'source_cache> Logger {
+    pub fn new(options: &cli::Flags, sources: Rc<Sources>) -> Self {
         let mut me = Self { 
             lexer_writer:  None,
             parser_writer:  None,
+            diag_root: options.diag_path.clone(),
             resolver:  None,
         };
         if options.lex || options.parse {
-            let _ = me.resolver.insert(ariadne::Source::from(source));
+            let _ = me.resolver.insert(sources);
             std::fs::create_dir_all(&options.diag_path)
                 .expect("unable to create diagnostic output directory");
         }
         if options.lex {
-            let mut path = options.diag_path.clone();
-            path.push(stem.clone());
-            path = path.with_extension("lexed");
-            let file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(path)
-                .expect("unable to open lex file to write into");
-
-            let _ = me.lexer_writer.insert(BufWriter::new(file));
+            me.lexer_writer = Some(HashMap::new());
         }    
         if options.parse {
-            let mut path = options.diag_path.clone();
-            path.push(stem);
-            path = path.with_extension("parsed");
-            let file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(path)
-                .expect("unable to open parse file to write into");
-
-            let _ = me.parser_writer.insert(BufWriter::new(file));
+            me.parser_writer = Some(HashMap::new());
         }    
         me
     }
@@ -61,15 +39,11 @@ impl Logger {
     pub fn is_logging_lexer(&self) -> bool { self.lexer_writer.is_some() }
     pub fn is_logging_parser(&self) -> bool { self.parser_writer.is_some() }
 
-    pub fn log_token(&mut self, byte_start: usize, _byte_end: usize, token: &impl std::fmt::Display) {
+    pub fn log_token(&mut self, at: EtaSpan, token: &impl std::fmt::Display) {
         if let Some(w) = &mut self.lexer_writer
         {
             //these are 0 indexed
-            let (_, line, col) = self.resolver
-                .as_ref()
-                .unwrap()
-                .get_byte_line(byte_start)
-                .expect("couldn't resolve location from byte offset");
+            let (_, line, col) = self.resolver.unwrap()(at.file_id);
             writeln!(w, "{}:{} {}", line + 1, col + 1, token)
                 .expect("failed to write to lex file buffer");
         }

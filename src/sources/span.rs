@@ -1,16 +1,14 @@
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EtaSpan<'fid> {
-    pub file_id: &'fid FileId,
+pub struct EtaSpan {
+    pub file_id: FileId,
     pub range: std::ops::Range<usize>,
 }
 
-impl<'fid> From<(&'fid FileId, std::ops::Range<usize>)> for EtaSpan<'fid> {
-    fn from(value: (&'fid FileId, std::ops::Range<usize>)) -> Self {
-        EtaSpan {
-            file_id: value.0,
-            range: value.1,
-        }
+impl From<(FileId, std::ops::Range<usize>)> for EtaSpan {
+    fn from((file_id, range): (FileId, std::ops::Range<usize>)) -> Self {
+        EtaSpan { file_id, range }
     }
 }
+

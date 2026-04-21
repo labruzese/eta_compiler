@@ -3,19 +3,19 @@ use crate::errors::{Diagnostic, NoFileDiagnostic};
 use crate::lexer;
 use crate::lexer::Token;
 use crate::logger::*;
-use crate::sources::EtaSource;
+use crate::sources::FileId;
 use crate::{cli, error};
 use lalrpop_util::{lalrpop_mod, ParseError};
 
 lalrpop_mod!(grammar);
 
 // Update signature to take file_id and the manager
-pub fn parse<'a>(source: &'a EtaSource) -> Result<ast::Program, Vec<Diagnostic<'a>>> {
+pub fn parse<'a>(source_name: FileId, source_content: &str) -> Result<ast::Program, Vec<Diagnostic>> {
     let options = cli::flags();
-    let lexer = lexer::Lexer::new(&source.source).spanned();
+    let lexer = lexer::Lexer::new(source_content).spanned();
 
     // make some writer for verbose lexing if flag is set
-    let mut logger = Logger::new(options, source.name.clone(), source.source.clone());
+    let mut logger = Logger::new(options, source_name, source_content.as_ref());
 
     // lex (unfortunately we can't stream the lexer since we need to complete lexing even if parsing
     // fails)
