@@ -9,22 +9,22 @@ use crate::sources::{FileId, Sources};
 
 #[macro_export]
 macro_rules! error {
-    ($span:expr, $($arg:tt)*) => {
-        NoFileDiagnostic::error($span, format!($($arg)*))
+    ($name:expr, $span:expr, $($arg:tt)*) => {
+        Diagnostic::error(($name, $span).into(), format!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! warn {
-    ($span:expr, $($arg:tt)*) => {
-        NoFileDiagnostic::warning($span, format!($($arg)*))
+    ($name:expr, $span:expr, $($arg:tt)*) => {
+        Diagnostic::warning(($name, $span).into(), format!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! note {
-    ($span:expr, $($arg:tt)*) => {
-        NoFileDiagnostic::note($span, format!($($arg)*))
+    ($name:expr, $span:expr, $($arg:tt)*) => {
+        Diagnostic::note(($name, $span).into(), format!($($arg)*))
     };
 }
 

@@ -1,6 +1,6 @@
 use super::*;
 use pretty::{Doc, RcDoc};
-use std::fmt;
+use std::fmt::{self, Display};
 
 const WIDTH: usize = 80;
 const INDENT: isize = 2;
@@ -8,6 +8,40 @@ const INDENT: isize = 2;
 /// Turn any `Display` value into a one-line doc.
 fn atom<T: fmt::Display>(x: T) -> RcDoc<'static, ()> {
     RcDoc::text(format!("{x}"))
+}
+
+trait ToDoc {
+    fn to_doc(&self) -> RcDoc<'static, ()>;
+}
+
+// Re-expose Display on every AST node by delegating to to_doc.
+macro_rules! impl_display {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl fmt::Display for $t {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    self.to_doc().render_fmt(WIDTH, f)
+                }
+            }
+        )*
+    }
+}
+
+impl_display!(
+    Program, Use, Definition, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
+    AssignLeft, Var, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
+);
+
+impl<T: Display> Display for Spanned<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.node, f)
+    }
+}
+
+impl<T: ToDoc> ToDoc for Spanned<T> {
+    fn to_doc(&self) -> RcDoc<'static, ()> {
+        self.node.to_doc()
+    }
 }
 
 /// Wrap docs in parens: inline if short, otherwise break and indent.
@@ -21,18 +55,18 @@ where
         .append(RcDoc::text(")"))
 }
 
-impl Program {
+impl ToDoc for Program {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Program::Prog { uses, definitions } => parens([
-                parens(uses.iter().map(Use::to_doc)),
-                parens(definitions.iter().map(Definition::to_doc)),
+                parens(uses.iter().map(Spanned::to_doc)),
+                parens(definitions.iter().map(Spanned::to_doc)),
             ]),
         }
     }
 }
 
-impl Use {
+impl ToDoc for Use {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Use::Id(id) => parens([RcDoc::text("use"), atom(id)]),
@@ -40,16 +74,17 @@ impl Use {
     }
 }
 
-impl Definition {
+impl ToDoc for Definition {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Definition::Method(m) => m.to_doc(),
             Definition::GlobDecl(g) => g.to_doc(),
+            Definition::Error => RcDoc::text("Error"),
         }
     }
 }
 
-impl Method {
+impl ToDoc for Method {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Method::Method {
@@ -59,15 +94,15 @@ impl Method {
                 body,
             } => parens([
                 atom(id),
-                parens(params.iter().map(Decl::to_doc)),
-                parens(ret_types.iter().map(Type::to_doc)),
+                parens(params.iter().map(Spanned::to_doc)),
+                parens(ret_types.iter().map(Spanned::to_doc)),
                 body.to_doc(),
             ]),
         }
     }
 }
 
-impl GlobDecl {
+impl ToDoc for GlobDecl {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             GlobDecl::GlobDecl { id, typ, val } => {
@@ -81,7 +116,7 @@ impl GlobDecl {
     }
 }
 
-impl Value {
+impl ToDoc for Value {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Value::IntLit(i) => atom(i),
@@ -90,7 +125,7 @@ impl Value {
     }
 }
 
-impl Decl {
+impl ToDoc for Decl {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Decl::Decl { id, typ } => parens([atom(id), typ.to_doc()]),
@@ -98,7 +133,7 @@ impl Decl {
     }
 }
 
-impl Type {
+impl ToDoc for Type {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Type::SizedArray { of, size } => parens([RcDoc::text("[]"), of.to_doc(), atom(size)]),
@@ -109,15 +144,15 @@ impl Type {
     }
 }
 
-impl Block {
+impl ToDoc for Block {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
-            Block::Block { stmts } => parens(stmts.iter().map(Stmt::to_doc)),
+            Block::Block { stmts } => parens(stmts.iter().map(Spanned::to_doc)),
         }
     }
 }
 
-impl Stmt {
+impl ToDoc for Stmt {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Stmt::Assignment(a) => a.to_doc(),
@@ -126,27 +161,26 @@ impl Stmt {
             Stmt::ReturnStmt(r) => r.to_doc(),
             Stmt::ProcCall(p) => p.to_doc(),
             Stmt::Block(b) => b.to_doc(),
-            Stmt::Decls { decls } => {
-                RcDoc::intersperse(decls.iter().map(Decl::to_doc), Doc::line()).group()
-            }
+            Stmt::Decls { decls } => RcDoc::intersperse(decls.iter().map(Spanned::to_doc), Doc::line()).group(),
+            Stmt::Error => RcDoc::text("Error")
         }
     }
 }
 
-impl Assignment {
+impl ToDoc for Assignment {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Assignment::Assignment { targets, values } => {
                 let t = if targets.len() == 1 {
                     targets[0].to_doc()
                 } else {
-                    parens(targets.iter().map(AssignLeft::to_doc))
+                    parens(targets.iter().map(Spanned::to_doc))
                 };
 
                 let v = if values.len() == 1 {
                     values[0].to_doc()
                 } else {
-                    parens(values.iter().map(Expr::to_doc))
+                    parens(values.iter().map(Spanned::to_doc))
                 };
 
                 parens([RcDoc::text("="), t, v])
@@ -155,7 +189,7 @@ impl Assignment {
     }
 }
 
-impl AssignLeft {
+impl ToDoc for AssignLeft {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             AssignLeft::Var(v) => v.to_doc(),
@@ -165,7 +199,7 @@ impl AssignLeft {
     }
 }
 
-impl Var {
+impl ToDoc for Var {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Var::Index { of, index } => parens([RcDoc::text("[]"), of.to_doc(), index.to_doc()]),
@@ -174,7 +208,7 @@ impl Var {
     }
 }
 
-impl IfStmt {
+impl ToDoc for IfStmt {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             IfStmt::IfStmt {
@@ -199,7 +233,7 @@ impl IfStmt {
     }
 }
 
-impl WhileStmt {
+impl ToDoc for WhileStmt {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             WhileStmt::WhileStmt { cond, body } => {
@@ -209,12 +243,12 @@ impl WhileStmt {
     }
 }
 
-impl ReturnStmt {
+impl ToDoc for ReturnStmt {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             ReturnStmt::ReturnStmt { values } => {
                 let mut items = vec![RcDoc::text("return")];
-                items.extend(values.iter().map(Expr::to_doc));
+                items.extend(values.iter().map(Spanned::to_doc));
                 parens(items)
             }
         }
@@ -226,14 +260,14 @@ impl ProcCall {
         match self {
             ProcCall::ProcCall { id, args } => {
                 let mut items = vec![atom(id)];
-                items.extend(args.iter().map(Expr::to_doc));
+                items.extend(args.iter().map(Spanned::to_doc));
                 parens(items)
             }
         }
     }
 }
 
-impl Expr {
+impl ToDoc for Expr {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Expr::Id(id) => atom(id),
@@ -249,7 +283,7 @@ impl Expr {
     }
 }
 
-impl Lit {
+impl ToDoc for Lit {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             Lit::IntLit(i) => atom(i),
@@ -260,11 +294,11 @@ impl Lit {
     }
 }
 
-impl ArrLit {
+impl ToDoc for ArrLit {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
             ArrLit::StringLit(s) => RcDoc::text(format!("\"{}\"", s.escape_default())),
-            ArrLit::Array(exprs) => parens(exprs.iter().map(Expr::to_doc)),
+            ArrLit::Array(exprs) => parens(exprs.iter().map(Spanned::to_doc)),
         }
     }
 }
@@ -299,21 +333,3 @@ impl fmt::Display for BinOp {
         })
     }
 }
-
-// Re-expose Display on every AST node by delegating to to_doc.
-macro_rules! impl_display {
-    ($($t:ty),* $(,)?) => {
-        $(
-            impl fmt::Display for $t {
-                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    self.to_doc().render_fmt(WIDTH, f)
-                }
-            }
-        )*
-    }
-}
-
-impl_display!(
-    Program, Use, Definition, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
-    AssignLeft, Var, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
-);

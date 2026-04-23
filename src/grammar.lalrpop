@@ -11,15 +11,24 @@
 //   * `Expr`                   — LALRPOP precedence macros
 
 use crate::ast::*;
+use crate::error;
 use crate::lexer::Token;
-use crate::errors::NoFileDiagnostic;
+use crate::errors::Diagnostic;
+use crate::sources::{FileId, span::EtaSpan};
 use lalrpop_util::ErrorRecovery;
 
-grammar(errors: &mut Vec<ErrorRecovery<usize, Token, NoFileDiagnostic>>);
+grammar(
+    file_id: &FileId,
+    errors:  &mut Vec<ErrorRecovery<usize, Token, Diagnostic>>
+);
 
-// ----------------------------------------------------------------------
-// Separator macros (right-recursive)
-// ----------------------------------------------------------------------
+// capture span
+Spanned<T>: Spanned<T> = {
+    <l:@L> <n:T> <r:@R> => Spanned {
+        span: EtaSpan { file_id: file_id.clone(), range: l..r },
+        node: n,
+    },
+};
 
 // One or more T separated by `,`, NO trailing comma.
 CommaPlus<T>: Vec<T> = {
@@ -56,7 +65,7 @@ CommaTrailingNonEmpty<T>: Vec<T> = {
 // ----------------------------------------------------------------------
 extern {
     type Location = usize;
-    type Error = NoFileDiagnostic;
+    type Error = Diagnostic;
 
     enum Token {
         "use"     => Token::KeywordUse,

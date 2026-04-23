@@ -1,0 +1,2 @@
+figure out how to pass file to lexer so it can just produce diagnostics
+make grammar produce spans

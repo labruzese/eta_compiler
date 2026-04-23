@@ -1,7 +1,7 @@
 use crate::ast;
 use crate::context::Context;
 use crate::error;
-use crate::errors::{Diagnostic, NoFileDiagnostic};
+use crate::errors::Diagnostic;
 use crate::lexer;
 use crate::lexer::Token;
 use crate::sources::FileId;
@@ -18,7 +18,7 @@ pub fn parse(ctx: &mut Context, file_id: &FileId) -> Result<ast::Program, Vec<Di
     let mut line_col = |offset: usize| ctx.sources.lc_index(&file_id, offset).unwrap();
 
     let lexer = lexer::Lexer::new(&source).spanned();
-    let tokens: Vec<Result<(usize, Token, usize), NoFileDiagnostic>> = lexer
+    let tokens: Vec<Result<(usize, Token, usize), Diagnostic>> = lexer
         .map(|(tok, span)| match tok {
             Ok(t) => {
                 ctx.logger
@@ -39,10 +39,10 @@ pub fn parse(ctx: &mut Context, file_id: &FileId) -> Result<ast::Program, Vec<Di
     if result.is_err() || !recovered.is_empty() {
         let mut errors: Vec<Diagnostic> = recovered
             .into_iter()
-            .map(|r| to_diag(r.error).specify_file(file_id))
+            .map(|r| to_diag(file_id, r.error))
             .collect();
         if let Err(e) = result {
-            errors.push(to_diag(e).specify_file(file_id));
+            errors.push(to_diag(file_id, e));
         }
         for err in &errors {
             ctx.logger
@@ -56,7 +56,7 @@ pub fn parse(ctx: &mut Context, file_id: &FileId) -> Result<ast::Program, Vec<Di
     Ok(program)
 }
 
-fn to_diag(err: ParseError<usize, Token, NoFileDiagnostic>) -> NoFileDiagnostic {
+fn to_diag(file: &FileId, err: ParseError<usize, Token, Diagnostic>) -> Diagnostic {
     use ParseError::*;
     match err {
         User { error } => error,
@@ -64,15 +64,15 @@ fn to_diag(err: ParseError<usize, Token, NoFileDiagnostic>) -> NoFileDiagnostic 
         UnrecognizedToken {
             token: (s, t, e),
             expected,
-        } => error!(s..e, "Unexpected token {}", t).with_primary_label(format_expected(&expected)),
+        } => error!(file, s..e, "Unexpected token {t}").with_primary_label(format_expected(&expected)),
 
         UnrecognizedEof { location, expected } => {
-            error!(location..location, "Unexpected end of file")
+            error!(file, location..location, "Unexpected end of file")
                 .with_primary_label(format_expected(&expected))
         }
 
         ExtraToken { token: (s, t, e) } => {
-            error!(s..e, "Extra token {} after program", t).with_primary_label("unexpected")
+            error!(file, s..e, "Extra token {} after program", t).with_primary_label("unexpected")
         }
 
         InvalidToken { location: _ } => {

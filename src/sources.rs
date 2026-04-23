@@ -8,7 +8,7 @@ pub mod span;
 mod line_index;
 
 use crate::error;
-use crate::errors::{NoFileDiagnostic, Diagnostic};
+use crate::errors::Diagnostic;
 use line_index::LineIndex;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -53,7 +53,7 @@ impl Sources {
         }
         let rc = std::fs::read_to_string(id.as_str())
             .map(Rc::from)
-            .map_err(|e| error!(0..0, "failed to read {}: {}", id, e).specify_file(&id));
+            .map_err(|e| error!(id, 0..0, "failed to read {id}: {e}"));
         if let Ok(rc1) = rc {
             self.texts.insert(id.clone(), Rc::clone(&rc1));
             Ok(rc1)
@@ -66,7 +66,7 @@ impl Sources {
         }
         let rc = std::fs::read_to_string(id.as_str())
             .map(Rc::from)
-            .map_err(|e| error!(0..0, "failed to read {}: {}", id, e).specify_file(&id));
+            .map_err(|e| error!(&id, 0..0, "failed to read {id}: {e}"));
         if let Ok(rc1) = rc {
             self.texts.insert(id.clone(), Rc::clone(&rc1));
             let index = LineIndex::new(&rc1);

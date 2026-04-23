@@ -1,41 +1,17 @@
-use std::fmt::Debug;
-
 use crate::sources::span::EtaSpan;
 
 mod printer;
 
 #[derive(Debug, Clone)]
-pub enum AstNode {
-    Program(Program),
-    Use(Use),
-    Definition(Definition),
-    Method(Method),
-    GlobDecl(GlobDecl),
-    Value(Value),
-    Decl(Decl),
-    Type(Type),
-    Block(Block),
-    Stmt(Stmt),
-    Assignment(Assignment),
-    AssignLeft(AssignLeft),
-    Var(Var),
-    IfStmt(IfStmt),
-    WhileStmt(WhileStmt),
-    ReturnStmt(ReturnStmt),
-    ProcCall(ProcCall),
-    Expr(Expr),
-    UOp(UOp),
-    BinOp(BinOp),
-    Id(Id),
-    IntLit(IntLit),
-    BoolLit(BoolLit),
-    CharLit(CharLit),
+pub struct Spanned<T> {
+    pub span: EtaSpan,
+    pub node: T,
 }
 
-#[derive(Debug, Clone)]
-pub struct SpannedAstNode {
-    span: EtaSpan,
-    ast: AstNode,
+impl<T> Spanned<T> {
+    pub fn new(span: EtaSpan, node: T) -> Self {
+        Self { span, node }
+    }
 }
 
 pub type Id = String;
@@ -46,8 +22,8 @@ pub type CharLit = char;
 #[derive(Debug, Clone)]
 pub enum Program {
     Prog {
-        uses: Vec<Use>,
-        definitions: Vec<Definition>,
+        uses: Vec<Spanned<Use>>,
+        definitions: Vec<Spanned<Definition>>,
     },
 }
 
@@ -60,15 +36,16 @@ pub enum Use {
 pub enum Definition {
     Method(Method),
     GlobDecl(GlobDecl),
+    Error,
 }
 
 #[derive(Debug, Clone)]
 pub enum Method {
     Method {
         id: Id,
-        params: Vec<Decl>,
-        ret_types: Vec<Type>,
-        body: Block,
+        params: Vec<Spanned<Decl>>,
+        ret_types: Vec<Spanned<Type>>,
+        body: Spanned<Block>,
     },
 }
 
@@ -76,8 +53,8 @@ pub enum Method {
 pub enum GlobDecl {
     GlobDecl {
         id: Id,
-        typ: Type,
-        val: Option<Value>,
+        typ: Spanned<Type>,
+        val: Option<Spanned<Value>>,
     },
 }
 
@@ -89,20 +66,25 @@ pub enum Value {
 
 #[derive(Debug, Clone)]
 pub enum Decl {
-    Decl { id: Id, typ: Type },
+    Decl { id: Id, typ: Spanned<Type> },
 }
 
 #[derive(Debug, Clone)]
 pub enum Type {
-    SizedArray { of: Box<Type>, size: Expr },
-    UnsizedArray { of: Box<Type> },
+    SizedArray {
+        of: Box<Spanned<Type>>,
+        size: Spanned<Expr>,
+    },
+    UnsizedArray {
+        of: Box<Spanned<Type>>,
+    },
     Int,
     Bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum Block {
-    Block { stmts: Vec<Stmt> },
+    Block { stmts: Vec<Spanned<Stmt>> },
 }
 
 #[derive(Debug, Clone)]
@@ -113,14 +95,15 @@ pub enum Stmt {
     ReturnStmt(ReturnStmt),
     ProcCall(ProcCall),
     Block(Block),
-    Decls { decls: Vec<Decl> },
+    Decls { decls: Vec<Spanned<Decl>> },
+    Error,
 }
 
 #[derive(Debug, Clone)]
 pub enum Assignment {
     Assignment {
-        targets: Vec<AssignLeft>,
-        values: Vec<Expr>,
+        targets: Vec<Spanned<AssignLeft>>,
+        values: Vec<Spanned<Expr>>,
     },
 }
 
@@ -133,35 +116,38 @@ pub enum AssignLeft {
 
 #[derive(Debug, Clone)]
 pub enum Var {
-    Index { of: Box<Var>, index: Expr },
+    Index {
+        of: Box<Spanned<Var>>,
+        index: Spanned<Expr>,
+    },
     Id(Id),
 }
 
 #[derive(Debug, Clone)]
 pub enum IfStmt {
     IfStmt {
-        cond: Expr,
-        then_branch: Box<Stmt>,
-        else_branch: Option<Box<Stmt>>,
+        cond: Spanned<Expr>,
+        then_branch: Box<Spanned<Stmt>>,
+        else_branch: Option<Box<Spanned<Stmt>>>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum WhileStmt {
     WhileStmt {
-        cond: Expr,
-        body: Box<Stmt>,
+        cond: Spanned<Expr>,
+        body: Box<Spanned<Stmt>>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum ReturnStmt {
-    ReturnStmt { values: Vec<Expr> },
+    ReturnStmt { values: Vec<Spanned<Expr>> },
 }
 
 #[derive(Debug, Clone)]
 pub enum ProcCall {
-    ProcCall { id: Id, args: Vec<Expr> },
+    ProcCall { id: Id, args: Vec<Spanned<Expr>> },
 }
 
 #[derive(Debug, Clone)]
@@ -169,19 +155,19 @@ pub enum Expr {
     Id(Id),
     Lit(Lit),
     Index {
-        array: Box<Expr>,
-        index: Box<Expr>,
+        array: Box<Spanned<Expr>>,
+        index: Box<Spanned<Expr>>,
     },
     Call(ProcCall),
-    Length(Box<Expr>),
+    Length(Box<Spanned<Expr>>),
     Unary {
         op: UOp,
-        expr: Box<Expr>,
+        expr: Box<Spanned<Expr>>,
     },
     Binary {
         op: BinOp,
-        left: Box<Expr>,
-        right: Box<Expr>,
+        left: Box<Spanned<Expr>>,
+        right: Box<Spanned<Expr>>,
     },
 }
 
@@ -190,7 +176,6 @@ pub enum UOp {
     Neg,
     Not,
 }
-
 #[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
@@ -220,5 +205,5 @@ pub enum Lit {
 #[derive(Debug, Clone)]
 pub enum ArrLit {
     StringLit(String),
-    Array(Vec<Expr>),
+    Array(Vec<Spanned<Expr>>),
 }
