@@ -348,7 +348,7 @@ impl fmt::Display for BinOp {
             BinOp::HighMul => "*>>",
             BinOp::Div => "/",
             BinOp::Mod => "%",
-            BinOp::Eq => "=",
+            BinOp::Eq => "==",
             BinOp::Neq => "!=",
             BinOp::Lt => "<",
             BinOp::Gt => ">",
