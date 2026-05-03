@@ -148,59 +148,102 @@ fn parse_str(lex: &mut Lexer) -> Result<String, Diagnostic> {
     let raw = lex.slice();
     let inner = &raw[1..raw.len() - 1];
     let mut out = String::with_capacity(inner.len());
-    let mut it = inner.chars().peekable();
-    while let Some(c) = it.next() {
+    let base = lex.span().start + 1; // +1 to skip the opening quote byte
+
+    let mut it = inner.char_indices().peekable();
+
+    while let Some((i, c)) = it.next() {
         if c != '\\' {
             out.push(c);
             continue;
         }
-        // Escape.
-        let esc = it.next().ok_or_else(|| {
-            error!(&lex.extras, lex.span(), "unterminated escape in string literal")
+
+        // The backslash sits at base + i.
+        let bs_span = base + i..base + i + 1;
+
+        let (ei, esc) = it.next().ok_or_else(|| {
+            error!(&lex.extras, bs_span.clone(), "unterminated escape in string literal")
                 .with_primary_label("dangling backslash")
         })?;
+
         match esc {
-            'n' => out.push('\n'),
-            't' => out.push('\t'),
-            'r' => out.push('\r'),
+            'n'  => out.push('\n'),
+            't'  => out.push('\t'),
+            'r'  => out.push('\r'),
             '\\' => out.push('\\'),
             '\'' => out.push('\''),
-            '"' => out.push('"'),
-            '0' => out.push('\0'),
-            'x' => {
-                // \x{HHHHHH}
-                if it.next() != Some('{') {
-                    return Err(error!(&lex.extras, lex.span(), "malformed unicode escape")
-                        .with_primary_label("expected `{` after `\\x`"));
+            '"'  => out.push('"'),
+            '0'  => out.push('\0'),
+            'x'  => {
+                // expect \x{hhhhhh}
+                match it.next() {
+                    Some((_, '{')) => {}
+                    _ => {
+                        let s = base + ei..base + ei + 1;
+                        return Err(error!(&lex.extras, s, "malformed unicode escape")
+                            .with_primary_label("expected `{` after `\\x`"));
+                    }
                 }
+
                 let mut hex = String::new();
+                let mut hex_start = None;
+
                 loop {
                     match it.next() {
-                        Some('}') => break,
-                        Some(h) if h.is_ascii_hexdigit() => hex.push(h),
-                        _ => {
-                            return Err(error!(&lex.extras, lex.span(), "malformed unicode escape")
-                                .with_primary_label("expected hex digits and `}`"))
+                        Some((_, '}')) => break,
+                        Some((j, h)) if h.is_ascii_hexdigit() => {
+                            hex_start.get_or_insert(j);
+                            hex.push(h);
+                        }
+                        Some((j, _)) => {
+                            let s = base + j..base + j + 1;
+                            return Err(
+                                error!(&lex.extras, s, "malformed unicode escape")
+                                    .with_primary_label("expected hex digits and `}`"),
+                            );
+                        }
+                        None => {
+                            // will always be a closing quote in this context
+                            let (j, _) = it.peek().unwrap(); 
+                            let s = base + j..base + j + 1;
+                            return Err(
+                                error!(&lex.extras, s, "malformed unicode escape")
+                                    .with_primary_label("expected to find `}`"),
+                            );
                         }
                     }
                 }
+
+                let hex_span = {
+                    let start = base + hex_start.unwrap_or(ei + 2);
+                    start..start + hex.len()
+                };
+
                 let codepoint = u32::from_str_radix(&hex, 16).map_err(|e| {
-                    error!(&lex.extras, lex.span(), "invalid unicode escape: {}", e)
+                    error!(&lex.extras, hex_span.clone(), "invalid unicode escape: {}", e)
                         .with_primary_label(e.to_string())
                 })?;
-                if let Some(ch) = char::from_u32(codepoint) {
-                    out.push(ch);
-                } else {
-                    return Err(error!(&lex.extras, lex.span(), "invalid unicode codepoint: U+{:X}", codepoint)
-                        .with_primary_label("not a valid unicode scalar"));
+
+                match char::from_u32(codepoint) {
+                    Some(ch) => out.push(ch),
+                    None => {
+                        return Err(
+                            error!(&lex.extras, hex_span, "invalid unicode codepoint: U+{:X}", codepoint)
+                                .with_primary_label("not a valid unicode scalar"),
+                        )
+                    }
                 }
             }
             other => {
-                return Err(error!(&lex.extras, lex.span(), "unknown escape: \\{}", other)
-                    .with_primary_label(format!("unknown escape: \\{}", other)))
+                let s = base + ei..base + ei + other.len_utf8();
+                return Err(
+                    error!(&lex.extras, s, "unknown escape: \\{}", other)
+                        .with_primary_label(format!("unknown escape: \\{}", other)),
+                );
             }
         }
     }
+
     Ok(out)
 }
 
@@ -262,8 +305,12 @@ impl fmt::Display for Token {
             Token::Assign => write!(f, "="),
             Token::Comma => write!(f, ","),
             Token::BoolLiteral(b) => write!(f, "{}", b),
-            Token::CharLiteral(c) => write!(f, "character {}", char::from_u32(*c).expect("illegal char somehow lexed").escape_default()),
-            Token::StrLiteral(s) => write!(f, "string {}", s.escape_default()),
+            Token::CharLiteral(c) => write!(f, "character {}", char::from_u32(*c)
+                                                                        .expect("illegal char somehow lexed")
+                                                                        .escape_default()
+                                                                        .collect::<String>()
+                                                                        .replace("\\u{", "\\x{")),
+            Token::StrLiteral(s) => write!(f, "string {}", s.escape_default().collect::<String>().replace("\\u{", "\\x{")),
             Token::Identifier(s) => write!(f, "id {}", s),
             Token::Integer(n) => write!(f, "integer {}", n),
             Token::LParen => write!(f, "("),
