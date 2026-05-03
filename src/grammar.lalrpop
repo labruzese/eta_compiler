@@ -9,9 +9,21 @@
 //                                through `DeclTail` and `AssignTail` so the
 //                                common `ident` prefix is consumed once
 //   * `Expr`                   — LALRPOP precedence macros
+//
+// Span conventions
+// ----------------
+//   * `Sp<T>` — LALRPOP rule macro: wraps any rule `T` (returning bare `T`)
+//     in a `Spanned<T>` by capturing `@L` / `@R` around it.
+//   * `sp!(file_id, l, r, node)` — Rust macro: shorthand for
+//     `Spanned::new(EtaSpan::new(file_id, l, r), node)`.
+//
+// Rules that are *self-referential* (Expr, Type, Var, Stmt) return
+// `Spanned<T>` directly and use `sp!()` internally.
+// Simpler rules (Use, Decl, Block, AssignLeft, GlobalValue) return
+// bare types and are wrapped with `Sp<T>` at their call-sites.
 
 use crate::ast::*;
-use crate::error;
+use crate::sp;
 use crate::lexer::Token;
 use crate::errors::Diagnostic;
 use crate::sources::{FileId, span::EtaSpan};
@@ -22,13 +34,10 @@ grammar(
     errors:  &mut Vec<ErrorRecovery<usize, Token, Diagnostic>>
 );
 
-// capture span
-Spanned<T>: Spanned<T> = {
-    <l:@L> <n:T> <r:@R> => Spanned {
-        span: EtaSpan { file_id: file_id.clone(), range: l..r },
-        node: n,
-    },
-};
+// ---- macros ----
+
+/// Wrap any rule in a `Spanned`. Captures `@L`..`@R` around the inner rule.
+Sp<T>: Spanned<T> = <l:@L> <n:T> <r:@R> => sp!(file_id, l, r, n);
 
 // One or more T separated by `,`, NO trailing comma.
 CommaPlus<T>: Vec<T> = {
@@ -43,7 +52,6 @@ Comma<T>: Vec<T> = {
 };
 
 // Zero or more T separated by `,`, trailing comma permitted.
-// Deliberately does NOT reuse `CommaPlus<T>` to avoid conflicts.
 CommaTrailing<T>: Vec<T> = {
                                                => vec![],
     <v:CommaTrailingNonEmpty<T>>               => v,
@@ -60,9 +68,7 @@ CommaTrailingNonEmpty<T>: Vec<T> = {
     },
 };
 
-// ----------------------------------------------------------------------
-// Token bindings
-// ----------------------------------------------------------------------
+// ---- Token bindings ----
 extern {
     type Location = usize;
     type Error = Diagnostic;
@@ -114,33 +120,35 @@ extern {
     }
 }
 
-// ----------------------------------------------------------------------
-// Top Level
-// ----------------------------------------------------------------------
+// ---- Top Level ----
 
 pub Program: Program = {
     <uses: UseList> <definitions: Definition*> =>
         Program::Prog { uses, definitions },
 };
 
-UseList: Vec<Use> = {
+pub Interface: Interface = {
+    <decls: MethodDecl+> => Interface::Interface(decls),
+}
+
+UseList: Vec<Spanned<Use>> = {
                                            => vec![],
-    <u:Use> <rest:UseListTail>             => {
+    <u:Sp<Use>> <rest:UseListTail>         => {
         let mut v = vec![u];
         v.extend(rest);
         v
     },
 };
 
-UseListTail: Vec<Use> = {
+UseListTail: Vec<Spanned<Use>> = {
                                            => vec![],
     ";"                                    => vec![],
-    ";" <u:Use> <rest:UseListTail>         => {
+    ";" <u:Sp<Use>> <rest:UseListTail>     => {
         let mut v = vec![u];
         v.extend(rest);
         v
     },
-    <u:Use> <rest:UseListTail>             => {
+    <u:Sp<Use>> <rest:UseListTail>         => {
         let mut v = vec![u];
         v.extend(rest);
         v
@@ -151,15 +159,27 @@ Use: Use = {
     "use" <id:"ident"> => Use::Id(id),
 };
 
-Definition: Definition = {
-    Method               => Definition::Method(<>),
-    <g:GlobDecl> ";"?    => Definition::GlobDecl(g),
+Definition: Spanned<Definition> = {
+    <l:@L> <m:Method> <r:@R> =>
+        sp!(file_id, l, r, Definition::Method(m)),
+    <l:@L> <g:GlobDecl> <r:@R> ";"? =>
+        sp!(file_id, l, r, Definition::GlobDecl(g)),
+};
+
+MethodDecl: Spanned<MethodDecl> = {
+    <l:@L> <id:"ident"> "(" <params:Comma<Sp<Decl>>> ")"
+        <ret:(":" <CommaPlus<Type>>)?> <r:@R> =>
+        sp!(file_id, l, r, MethodDecl::MethodDecl {
+            id,
+            params,
+            ret_types: ret.unwrap_or_default(),
+        }),
 };
 
 // Spec: `id(params) : T1, T2 { ... }`.
 Method: Method = {
-    <id:"ident"> "(" <params:Comma<Decl>> ")"
-        <ret:(":" <CommaPlus<Type>>)?> <body:Block> =>
+    <id:"ident"> "(" <params:Comma<Sp<Decl>>> ")"
+        <ret:(":" <CommaPlus<Type>>)?> <body:Sp<Block>> =>
         Method::Method {
             id,
             params,
@@ -171,7 +191,7 @@ Method: Method = {
 // Globals can be initialised to an integer literal (possibly
 // negated) or a boolean literal. Array globals cannot be initialised.
 GlobDecl: GlobDecl = {
-    <id:"ident"> ":" <typ:Type> <val:("=" <GlobalValue>)?> =>
+    <id:"ident"> ":" <typ:Type> <val:("=" <Sp<GlobalValue>>)?> =>
         GlobDecl::GlobDecl { id, typ, val },
 };
 
@@ -187,18 +207,22 @@ Decl: Decl = {
 
 // A type is a base type followed by zero or more dimensions. Each
 // dimension is either sized (`[expr]`) or empty (`[]`). The "no sized
-// dim after an empty dim" rule is checked in semantic analysis where we
-// can emit a decent diagnostic.
-Type: Type = {
-    <base:BaseType> <dims:TypeDim*> => {
-	dims.into_iter().rev().fold(base, |inner, d| match d {
-	    Some(e) => Type::SizedArray { of: Box::new(inner), size: e },
-	    None => Type::UnsizedArray { of: Box::new(inner) },
-	})
+// dim after an empty dim" rule is checked in semantic analysis.
+//
+// Returns Spanned<Type> directly because array types are
+// self-referential (of: Box<Spanned<Type>>).
+Type: Spanned<Type> = {
+    <l:@L> <base:BaseType> <dims:TypeDim*> <r:@R> => {
+        let span = EtaSpan::new(file_id.clone(), l, r);
+        let ty = dims.into_iter().rev().fold(base, |inner, d| match d {
+            Some(e) => Type::SizedArray { of: Box::new(Spanned::new(span.clone(), inner)), size: e },
+            None    => Type::UnsizedArray { of: Box::new(Spanned::new(span.clone(), inner)) },
+        });
+        Spanned::new(span, ty)
     },
 };
 
-TypeDim: Option<Expr> = {
+TypeDim: Option<Spanned<Expr>> = {
     "[" <e:Expr?> "]" => e,
 };
 
@@ -207,29 +231,29 @@ BaseType: Type = {
     "bool" => Type::Bool,
 };
 
-// A block is `{ stmt; stmt; ...; ret?; }`. `return` must be the LAST
-// statement in the enclosing block. `;` is required between adjacent
-// statements; a trailing `;` before `}` is permitted.
+// A block is `{ stmt; stmt; ...; ret?; }`.
 Block: Block = {
     "{" <stmts:BlockStmts> "}" => Block::Block { stmts },
 };
 
 // Block body: 0+ regular stmts, optionally ending in a `ReturnStmt`,
 // each separated by `;`. Trailing `;` permitted.
-BlockStmts: Vec<Stmt> = {
-                                                  => vec![],
-    <r:ReturnStmt> ";"?                           => vec![Stmt::ReturnStmt(r)],
-    <s:Stmt> ";"? <rest:BlockStmtsAfter>               => {
+BlockStmts: Vec<Spanned<Stmt>> = {
+    => vec![],
+    <l:@L> <rv:ReturnStmt> <r:@R> ";"? =>
+        vec![sp!(file_id, l, r, Stmt::ReturnStmt(rv))],
+    <s:Stmt> ";"? <rest:BlockStmtsAfter> => {
         let mut v = vec![s];
         v.extend(rest);
         v
     },
 };
 
-BlockStmtsAfter: Vec<Stmt> = {
-                                                  => vec![],
-    <r:ReturnStmt> ";"?                      	  => vec![Stmt::ReturnStmt(r)],
-    <s:Stmt> ";"? <rest:BlockStmtsAfter>          => {
+BlockStmtsAfter: Vec<Spanned<Stmt>> = {
+    => vec![],
+    <l:@L> <rv:ReturnStmt> <r:@R> ";"? =>
+        vec![sp!(file_id, l, r, Stmt::ReturnStmt(rv))],
+    <s:Stmt> ";"? <rest:BlockStmtsAfter> => {
         let mut v = vec![s];
         v.extend(rest);
         v
@@ -240,161 +264,139 @@ ReturnStmt: ReturnStmt = {
     "return" <values:Comma<Expr>> => ReturnStmt::ReturnStmt { values },
 };
 
-// A statement is either "closed" (all its trailing `if`s have an `else`) or
-// "open" (there's an `if` with no matching `else`). The only place an
-// `else` may attach is the innermost unmatched `if`, so we forbid the
-// inner stmt of `if ... else <inner>` and `while <body>` from being an
-// open statement when we're looking at the head of an else branch.
-Stmt: Stmt = { ClosedStmt, OpenStmt };
+// ---- Statements — matched / unmatched (dangling-else) ----
 
-OpenStmt: Stmt = {
-    "if" <cond:Expr> <then:Stmt> =>
-        Stmt::IfStmt(IfStmt::IfStmt {
+Stmt: Spanned<Stmt> = { ClosedStmt, OpenStmt };
+
+OpenStmt: Spanned<Stmt> = {
+    <l:@L> "if" <cond:Expr> <then:Stmt> <r:@R> =>
+        sp!(file_id, l, r, Stmt::IfStmt(IfStmt::IfStmt {
             cond, then_branch: Box::new(then), else_branch: None,
-        }),
-    "if" <cond:Expr> <then:ClosedStmt> "else" <els:OpenStmt> =>
-        Stmt::IfStmt(IfStmt::IfStmt {
-            cond,
-            then_branch: Box::new(then),
-            else_branch: Some(Box::new(els)),
-        }),
-    "while" <cond:Expr> <body:OpenStmt> =>
-        Stmt::WhileStmt(WhileStmt::WhileStmt { cond, body: Box::new(body) }),
+        })),
+    <l:@L> "if" <cond:Expr> <then:ClosedStmt> "else" <els:OpenStmt> <r:@R> =>
+        sp!(file_id, l, r, Stmt::IfStmt(IfStmt::IfStmt {
+            cond, then_branch: Box::new(then), else_branch: Some(Box::new(els)),
+        })),
+    <l:@L> "while" <cond:Expr> <body:OpenStmt> <r:@R> =>
+        sp!(file_id, l, r, Stmt::WhileStmt(WhileStmt::WhileStmt {
+            cond, body: Box::new(body),
+        })),
 };
 
-ClosedStmt: Stmt = {
-    "if" <cond:Expr> <then:ClosedStmt> "else" <els:ClosedStmt> =>
-        Stmt::IfStmt(IfStmt::IfStmt {
-            cond,
-            then_branch: Box::new(then),
-            else_branch: Some(Box::new(els)),
-        }),
-    "while" <cond:Expr> <body:ClosedStmt> =>
-        Stmt::WhileStmt(WhileStmt::WhileStmt { cond, body: Box::new(body) }),
+ClosedStmt: Spanned<Stmt> = {
+    <l:@L> "if" <cond:Expr> <then:ClosedStmt> "else" <els:ClosedStmt> <r:@R> =>
+        sp!(file_id, l, r, Stmt::IfStmt(IfStmt::IfStmt {
+            cond, then_branch: Box::new(then), else_branch: Some(Box::new(els)),
+        })),
+    <l:@L> "while" <cond:Expr> <body:ClosedStmt> <r:@R> =>
+        sp!(file_id, l, r, Stmt::WhileStmt(WhileStmt::WhileStmt {
+            cond, body: Box::new(body),
+        })),
     SimpleStmt,
 };
 
-SimpleStmt: Stmt = {
-    <b:Block>          => Stmt::Block(b),
+SimpleStmt: Spanned<Stmt> = {
+    <l:@L> <b:Block> <r:@R> =>
+        sp!(file_id, l, r, Stmt::Block(b)),
     IdentStartStmt,
     UnderscoreStmt,
 };
 
-// ---------------------------------------------------------------------------
-// Statements beginning with an identifier
-//
-// Disambiguate on the token following `ident`:
-//   `(`            -> procedure call
-//   `:`            -> decl target (possibly followed by `,`-list and `= RHS`)
-//   `[`, `,`, `=`  -> id target (with optional indices, then `,`-list, then `= RHS`)
-//
-// `DeclTail` = everything that may follow `ident : Type`:
-//   `` | `=` CommaPlus<Expr> | `,` AssignLeft ... (optionally `= RHS`)
-//
-// `AssignTail` = everything that may follow an `ident` / `ident Index+` /
-// `_` target when no `:` was seen. An `=` RHS is mandatory here because
-// a bare id target alone is not a statement.
-// ---------------------------------------------------------------------------
+// ---- Statements beginning with an identifier ----
 
-IdentStartStmt: Stmt = {
+IdentStartStmt: Spanned<Stmt> = {
     // f(x, y, z)
-    <id:"ident"> "(" <args:Comma<Expr>> ")" =>
-        Stmt::ProcCall(ProcCall::ProcCall { id, args }),
+    <l:@L> <id:"ident"> "(" <args:Comma<Expr>> ")" <r:@R> =>
+        sp!(file_id, l, r, Stmt::ProcCall(ProcCall::ProcCall { id, args })),
 
-    // x:int                    (pure decl, `rhs` = None)
-    // x:int, y:int             (multi-decl, `rhs` = None)
-    // x:int = e                (single-decl assignment)
-    // x:int, y:int = e1, e2    (multi-decl assignment)
-    // x:int, y     = f(a)      (mixed decl + var in LHS)
-    //
-    // OVER-ACCEPT: when `rhs` is None, non-decl targets (id, ignore) are
-    // not valid — e.g. `x:int, y` without `=` is rejected semantically.
-    <id:"ident"> ":" <typ:Type> <rest:DeclTail> => {
-        let head = AssignLeft::Decl(Decl::Decl { id, typ });
+    // x:int [, ...] [= ...]
+    <l:@L> <id:"ident"> ":" <typ:Type> <rest:DeclTail> <r:@R> => {
+        let head = sp!(file_id, l, typ.span.range.end,
+            AssignLeft::Decl(Decl::Decl { id, typ }));
         let (tail, rhs) = rest;
         let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
-        match rhs {
+        let stmt = match rhs {
             Some(values) => Stmt::Assignment(Assignment::Assignment { targets, values }),
             None => Stmt::Decls {
-                decls: targets.into_iter().filter_map(|t| match t {
-                    AssignLeft::Decl(d) => Some(d),
+                decls: targets.into_iter().filter_map(|t| match t.node {
+                    AssignLeft::Decl(d) => Some(Spanned::new(t.span, d)),
                     _ => None,
                 }).collect(),
             },
-        }
+        };
+        sp!(file_id, l, r, stmt)
     },
 
-    <var:Var> <rest:AssignTail> => {
-	let head = AssignLeft::Var(var);
+    // var [, ...] = ...
+    <l:@L> <var:Var> <rest:AssignTail> <r:@R> => {
+        let head = Spanned::new(var.span.clone(), AssignLeft::Var(var.node));
         let (tail, values) = rest;
         let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
-        Stmt::Assignment(Assignment::Assignment { targets, values })
+        sp!(file_id, l, r, Stmt::Assignment(Assignment::Assignment { targets, values }))
     },
 };
 
-UnderscoreStmt: Stmt = {
-    "_" <rest:AssignTail> => {
+UnderscoreStmt: Spanned<Stmt> = {
+    <l:@L> "_" <rest:AssignTail> <r:@R> => {
         let (tail, values) = rest;
-        let targets: Vec<_> = std::iter::once(AssignLeft::Ignore).chain(tail).collect();
-        Stmt::Assignment(Assignment::Assignment { targets, values })
+        let targets: Vec<_> = std::iter::once(
+            sp!(file_id, l, l + 1, AssignLeft::Ignore)
+        ).chain(tail).collect();
+        sp!(file_id, l, r, Stmt::Assignment(Assignment::Assignment { targets, values }))
     },
 };
 
 // DeclTail returns (remaining LHS targets, optional RHS values).
-//   ""                                        -> (vec![], None)
-//   "=" CommaPlus<Expr>                       -> (vec![], Some(values))
-//   ("," AssignLeft)+                         -> (tail, None)
-//   ("," AssignLeft)+ "=" CommaPlus<Expr>     -> (tail, Some(values))
-DeclTail: (Vec<AssignLeft>, Option<Vec<Expr>>) = {
-                                                 => (vec![], None),
-    "=" <values:CommaPlus<Expr>>                 => (vec![], Some(values)),
-    "," <first:AssignLeft> <rest:DeclTail>       => {
-        let (mut ts, rhs) = rest;
-        ts.insert(0, first);
-        (ts, rhs)
+DeclTail: (Vec<Spanned<AssignLeft>>, Option<Vec<Spanned<Expr>>>) = {
+                                                     => (vec![], None),
+    "=" <values:CommaPlus<Expr>>                     => (vec![], Some(values)),
+    "," <first:Sp<AssignLeft>> <rest:DeclTail>       => {
+	let (mut ts, rhs) = rest;
+	ts.insert(0, first);
+	(ts, rhs)
     },
 };
 
-// AssignTail returns (remaining LHS targets, RHS values). The `=` is
-// mandatory because a bare id-target isn't a valid stand-alone statement.
-//   "=" CommaPlus<Expr>
-//   ("," AssignLeft)+ "=" CommaPlus<Expr>
-AssignTail: (Vec<AssignLeft>, Vec<Expr>) = {
-    "=" <values:CommaPlus<Expr>>                 => (vec![], values),
-    "," <first:AssignLeft> <rest:AssignTail>     => {
-        let (mut ts, values) = rest;
-        ts.insert(0, first);
-        (ts, values)
+// AssignTail — `=` is mandatory (bare id-target is not a statement).
+AssignTail: (Vec<Spanned<AssignLeft>>, Vec<Spanned<Expr>>) = {
+    "=" <values:CommaPlus<Expr>>                     => (vec![], values),
+    "," <first:Sp<AssignLeft>> <rest:AssignTail>     => {
+	let (mut ts, values) = rest;
+	ts.insert(0, first);
+	(ts, values)
     },
 };
 
-// Assignment targets that may follow the first one in a `,`-list.
+// Assignment targets after the first one in a `,`-list.
 AssignLeft: AssignLeft = {
-    <id:"ident"> ":" <typ:Type>   => AssignLeft::Decl(Decl::Decl { id, typ }),
-    <var:Var> 			  => AssignLeft::Var(var),
-    "_"                           => AssignLeft::Ignore,
+    <id:"ident"> ":" <typ:Type> => AssignLeft::Decl(Decl::Decl { id, typ }),
+    <var:Var>                   => AssignLeft::Var(var.node),
+    "_"                         => AssignLeft::Ignore,
 };
 
-// a potentially indexed id
-Var: Var = {
-    <id:"ident"> <indices:Index*> => {
-	indices.into_iter().rev().fold(Var::Id(id), |inner, i|
-	     Var::Index { of: Box::new(inner), index: i }
-	)
+// A potentially indexed id. Returns Spanned because Var::Index is
+// self-referential (of: Box<Spanned<Var>>).
+Var: Spanned<Var> = {
+    <l:@L> <id:"ident"> <indices:Index*> <r:@R> => {
+        let span = EtaSpan::new(file_id.clone(), l, r);
+        let var = indices.into_iter().rev().fold(Var::Id(id), |inner, i|
+            Var::Index { of: Box::new(Spanned::new(span.clone(), inner)), index: i }
+        );
+        Spanned::new(span, var)
     },
-}
+};
 
-Index: Expr = { "[" <Expr> "]" };
+Index: Spanned<Expr> = { 
+    "[" <Expr> "]" 
+};
 
-// ---------------------------------------------------------------------------
-// Expressions
-//
-// Operator-tag rules (`MulOp`, `AddOp`, ...) lift the BinOp mapping out
-// of the precedence table so each precedence level is a single line.
-// #[inline] keeps these out of the parse table as separate states.
-// ---------------------------------------------------------------------------
+// ---- Expressions — returns Spanned<Expr> because every sub-expression ----
+// ---- (Binary.left, Binary.right, Unary.expr, etc.) needs a span. ----
 
-#[inline] UnaryOp: UOp = { "-" => UOp::Neg, "!" => UOp::Not };
+#[inline] UnaryOp: UOp = { 
+    "-" => UOp::Neg,
+    "!" => UOp::Not 
+};
 
 #[inline] MulOp: BinOp = {
     "*"   => BinOp::Mul,
@@ -403,67 +405,61 @@ Index: Expr = { "[" <Expr> "]" };
     "%"   => BinOp::Mod,
 };
 
-#[inline] AddOp: BinOp = { "+" => BinOp::Add, "-" => BinOp::Sub };
+#[inline] AddOp: BinOp = { 
+    "+" => BinOp::Add,
+    "-" => BinOp::Sub
+};
 
 #[inline] RelOp: BinOp = {
     "<"  => BinOp::Lt, "<=" => BinOp::Le,
     ">"  => BinOp::Gt, ">=" => BinOp::Ge,
 };
 
-#[inline] EqOp: BinOp = { "==" => BinOp::Eq, "!=" => BinOp::Neq };
+#[inline] EqOp: BinOp = { 
+    "==" => BinOp::Eq, 
+    "!=" => BinOp::Neq 
+};
 
-Expr: Expr = {
+Expr: Spanned<Expr> = {
     #[precedence(level="0")] Primary,
 
     #[precedence(level="1")]
-    <op:UnaryOp> <e:Expr> => Expr::Unary { op, expr: Box::new(e) },
+    <l:@L> <op:UnaryOp> <e:Expr> <r:@R> 	      => sp!(file_id, l, r, Expr::Unary { op, expr: Box::new(e) }),
 
     #[precedence(level="2")] #[assoc(side="left")]
-    <l:Expr> <op:MulOp> <r:Expr> =>
-        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+    <l:@L> <left:Expr> <op:MulOp> <right:Expr> <r:@R> => sp!(file_id, l, r, Expr::Binary { op, left: Box::new(left), right: Box::new(right) }),
 
     #[precedence(level="3")] #[assoc(side="left")]
-    <l:Expr> <op:AddOp> <r:Expr> =>
-        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+    <l:@L> <left:Expr> <op:AddOp> <right:Expr> <r:@R> => sp!(file_id, l, r, Expr::Binary { op, left: Box::new(left), right: Box::new(right) }),
 
     #[precedence(level="4")] #[assoc(side="left")]
-    <l:Expr> <op:RelOp> <r:Expr> =>
-        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+    <l:@L> <left:Expr> <op:RelOp> <right:Expr> <r:@R> => sp!(file_id, l, r, Expr::Binary { op, left: Box::new(left), right: Box::new(right) }),
 
     #[precedence(level="5")] #[assoc(side="left")]
-    <l:Expr> <op:EqOp> <r:Expr> =>
-        Expr::Binary { op, left: Box::new(l), right: Box::new(r) },
+    <l:@L> <left:Expr> <op:EqOp> <right:Expr> <r:@R>  => sp!(file_id, l, r, Expr::Binary { op, left: Box::new(left), right: Box::new(right) }),
 
     #[precedence(level="6")] #[assoc(side="left")]
-    <l:Expr> "&" <r:Expr> =>
-        Expr::Binary { op: BinOp::And, left: Box::new(l), right: Box::new(r) },
+    <l:@L> <left:Expr> "&" <right:Expr> <r:@R>        => sp!(file_id, l, r, Expr::Binary { op: BinOp::And, left: Box::new(left), right: Box::new(right) }),
 
     #[precedence(level="7")] #[assoc(side="left")]
-    <l:Expr> "|" <r:Expr> =>
-        Expr::Binary { op: BinOp::Or, left: Box::new(l), right: Box::new(r) },
+    <l:@L> <left:Expr> "|" <right:Expr> <r:@R> 	      => sp!(file_id, l, r, Expr::Binary { op: BinOp::Or, left: Box::new(left), right: Box::new(right) }),
 };
 
-// Primary: atoms, postfix indexing, parens.
-//
-// Left-recursive in `Primary` for postfix `[]`, which attaches tighter than
-// any binary or unary operator. Function calls and `length(...)` stay at
-// the atom level because they take identifiers/keywords as heads, you
-// cannot write `(f)(x)` or `length[0]`.
-Primary: Expr = {
-    <l:Lit>                                 => Expr::Lit(l),
-    <id:"ident">                            => Expr::Id(id),
-    <id:"ident"> "(" <args:Comma<Expr>> ")" => Expr::Call(ProcCall::ProcCall { id, args }),
-    "length" "(" <e:Expr> ")"               => Expr::Length(Box::new(e)),
-    "(" <Expr> ")",
-    <arr:Primary> "[" <i:Expr> "]"          =>
-        Expr::Index { array: Box::new(arr), index: Box::new(i) },
+// ---- Primary: atoms, postfix indexing, parens. ----
+Primary: Spanned<Expr> = {
+    <l:@L> <lit:Lit> <r:@R>                            => sp!(file_id, l, r, Expr::Lit(lit)),
+    <l:@L> <id:"ident"> <r:@R>                         => sp!(file_id, l, r, Expr::Id(id)),
+    <l:@L> <id:"ident"> "(" <a:Comma<Expr>> ")" <r:@R> => sp!(file_id, l, r, Expr::Call(ProcCall::ProcCall { id, args: a })),
+    <l:@L> "length" "(" <e:Expr> ")" <r:@R>            => sp!(file_id, l, r, Expr::Length(Box::new(e))),
+    <l:@L> "(" <e:Expr> ")" <r:@R>                     => sp!(file_id, l, r, e.node),
+    <l:@L> <arr:Primary> "[" <i:Expr> "]" <r:@R>       => sp!(file_id, l, r, Expr::Index { array: Box::new(arr), index: Box::new(i) }),
 };
 
 Lit: Lit = {
-    <n:"intlit">  => Lit::IntLit(n as i128),
-    <b:"boollit"> => Lit::BoolLit(b),
-    <c:"charlit"> => Lit::CharLit(char::from_u32(c).expect("lexer should have rejected invalid codepoint")),
-    <s:"strlit">  => Lit::ArrLit(ArrLit::StringLit(s)),
-    // Array constructor; trailing comma permitted.
+    <n:"intlit">  			=> Lit::IntLit(n as i128),
+    <b:"boollit"> 			=> Lit::BoolLit(b),
+    <c:"charlit"> 			=> Lit::CharLit(char::from_u32(c).expect("lexer should have rejected invalid codepoint")),
+    <s:"strlit">  			=> Lit::ArrLit(ArrLit::StringLit(s)),
     "{" <exprs:CommaTrailing<Expr>> "}" => Lit::ArrLit(ArrLit::Array(exprs)),
 };
+

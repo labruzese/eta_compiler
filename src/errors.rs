@@ -5,12 +5,12 @@ use std::{fmt::Debug, ops::Range, rc::Rc};
 
 use ariadne::{Color, Label, Report, ReportKind};
 
-use crate::sources::{FileId, Sources};
+use crate::sources::{SourceId, Sources};
 
 #[macro_export]
 macro_rules! error {
     ($name:expr, $span:expr, $($arg:tt)*) => {
-        Diagnostic::error(($name, $span).into(), format!($($arg)*))
+        crate::errors::Diagnostic::error(($name, $span).into(), format!($($arg)*))
     };
 }
 
@@ -35,15 +35,12 @@ pub enum Level {
     Note,
 }
 
-mod no_file_diagnostic;
-pub use no_file_diagnostic::*;
-
 mod diagnostic;
 pub use diagnostic::*;
 
 impl ariadne::Span for EtaSpan {
-    type SourceId = FileId;
-    fn source(&self) -> &FileId { &self.file_id }
+    type SourceId = SourceId;
+    fn source(&self) -> &SourceId { &self.file_id }
     fn start(&self) -> usize   { self.range.start }
     fn end(&self)   -> usize   { self.range.end }
 }

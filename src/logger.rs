@@ -71,7 +71,7 @@ impl Logger {
         writers.insert(file.clone(), None); // remove writer (only report first error)
     }
 
-    pub fn log_parse(&self, file: &FileId, program: &ast::Program) {
+    pub fn log_parse(&self, file: &FileId, program: impl std::fmt::Display) {
         Self::with_writer(&self.parser_writers, &self.diag_root, file, "parsed", |w| {
             writeln!(w, "{}", program).unwrap();
         });

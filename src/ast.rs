@@ -1,5 +1,14 @@
 use crate::sources::span::EtaSpan;
 
+/// Shorthand for wrapping an AST node in a `Spanned` with a file-aware span.
+/// Usage: `sp!(file_id, start, end, node)`
+#[macro_export]
+macro_rules! sp {
+    ($file:expr, $l:expr, $r:expr, $node:expr) => {
+        Spanned::new(EtaSpan::new($file.clone(), $l, $r), $node)
+    };
+}
+
 mod printer;
 
 #[derive(Debug, Clone)]
@@ -27,6 +36,10 @@ pub enum Program {
     },
 }
 
+pub enum Interface {
+    Interface(Vec<Spanned<MethodDecl>>)
+}
+
 #[derive(Debug, Clone)]
 pub enum Use {
     Id(Id),
@@ -37,6 +50,15 @@ pub enum Definition {
     Method(Method),
     GlobDecl(GlobDecl),
     Error,
+}
+
+#[derive(Debug, Clone)]
+pub enum MethodDecl {
+    MethodDecl {
+        id: Id,
+        params: Vec<Spanned<Decl>>,
+        ret_types: Vec<Spanned<Type>>,
+    },
 }
 
 #[derive(Debug, Clone)]

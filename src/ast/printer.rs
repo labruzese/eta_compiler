@@ -28,7 +28,7 @@ macro_rules! impl_display {
 }
 
 impl_display!(
-    Program, Use, Definition, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
+    Program, Interface, Use, Definition, MethodDecl, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
     AssignLeft, Var, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
 );
 
@@ -66,6 +66,16 @@ impl ToDoc for Program {
     }
 }
 
+impl ToDoc for Interface {
+    fn to_doc(&self) -> RcDoc<'static, ()> {
+        match self {
+            Interface::Interface(decls) => parens([
+                parens(decls.iter().map(Spanned::to_doc)),
+            ]),
+        }
+    }
+}
+
 impl ToDoc for Use {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
@@ -80,6 +90,22 @@ impl ToDoc for Definition {
             Definition::Method(m) => m.to_doc(),
             Definition::GlobDecl(g) => g.to_doc(),
             Definition::Error => RcDoc::text("Error"),
+        }
+    }
+}
+
+impl ToDoc for MethodDecl {
+    fn to_doc(&self) -> RcDoc<'static, ()> {
+        match self {
+            MethodDecl::MethodDecl{
+                id,
+                params,
+                ret_types,
+            } => parens([
+                atom(id),
+                parens(params.iter().map(Spanned::to_doc)),
+                parens(ret_types.iter().map(Spanned::to_doc)),
+            ]),
         }
     }
 }

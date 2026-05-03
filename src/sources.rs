@@ -12,7 +12,13 @@ use crate::errors::Diagnostic;
 use line_index::LineIndex;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// use when you don't care about the difference between interface and source files
 pub struct FileId(Rc<str>);
+
+/// file containing source code
+pub type SourceId = FileId;
+/// file containing an interface
+pub type InterfaceId = FileId;
 
 impl FileId {
     pub fn new(name: impl Into<Rc<str>>) -> Self { Self(name.into()) }
@@ -66,7 +72,7 @@ impl Sources {
         }
         let rc = std::fs::read_to_string(id.as_str())
             .map(Rc::from)
-            .map_err(|e| error!(&id, 0..0, "failed to read {id}: {e}"));
+            .map_err(|e| error!(id, 0..0, "failed to read {id}: {e}"));
         if let Ok(rc1) = rc {
             self.texts.insert(id.clone(), Rc::clone(&rc1));
             let index = LineIndex::new(&rc1);

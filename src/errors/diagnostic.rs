@@ -66,3 +66,14 @@ impl Diagnostic {
         self
     }
 }
+
+/// Required by logos for the error type trait bound. Never actually used
+/// because we always provide an explicit error callback.
+impl Default for Diagnostic {
+    fn default() -> Self {
+        Self::error(
+            EtaSpan { file_id: SourceId::new("<unknown>"), range: 0..0 },
+            "unknown error",
+        )
+    }
+}

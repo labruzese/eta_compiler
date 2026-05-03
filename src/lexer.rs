@@ -3,14 +3,12 @@ use std::{fmt, num::ParseIntError};
 
 use crate::{
     error,
-    errors::{NoFileDiagnostic},
+    errors::Diagnostic,
+    sources::SourceId,
 };
 
-impl NoFileDiagnostic {
-    fn from_lexer(lex: &mut logos::Lexer<'_, Token>) -> Self {
-        let loc = lex.span();
-        error!(loc, "unknown token").with_primary_label("this token")
-    }
+fn lexer_error(lex: &mut logos::Lexer<'_, Token>) -> Diagnostic {
+    error!(&lex.extras, lex.span(), "unknown token").with_primary_label("this token")
 }
 
 pub type Lexer<'input> = logos::Lexer<'input, Token>;
@@ -18,7 +16,8 @@ pub type Lexer<'input> = logos::Lexer<'input, Token>;
 #[derive(Debug, Clone, PartialEq, Logos)]
 #[logos(skip r"[ \t\n\f\r]+")]
 #[logos(skip r"//[^\n]*")]
-#[logos(error(NoFileDiagnostic, NoFileDiagnostic::from_lexer))]
+#[logos(extras = SourceId)]
+#[logos(error(Diagnostic, lexer_error))]
 pub enum Token {
     // Keywords
     #[token("use")]
@@ -119,9 +118,9 @@ pub enum Token {
 
 // Callbacks
 
-fn parse_int(lex: &mut Lexer) -> Result<u64, NoFileDiagnostic> {
+fn parse_int(lex: &mut Lexer) -> Result<u64, Diagnostic> {
     lex.slice().parse::<u64>().map_err(|err: ParseIntError| {
-        error!(lex.span(), "illegal integer literal: {}", err).with_primary_label(
+        error!(&lex.extras, lex.span(), "illegal integer literal: {}", err).with_primary_label(
             err.to_string().replace("number too extreme to fit in target type", "integer out of range"),
         )
     })
@@ -129,22 +128,23 @@ fn parse_int(lex: &mut Lexer) -> Result<u64, NoFileDiagnostic> {
 
 /// Parse a char literal of the form `'c'`, `'\\c'`, or `'\\x{HHHHHH}'`.
 /// The surrounding quotes are stripped by this function.
-fn parse_char(lex: &mut Lexer) -> Result<u32, NoFileDiagnostic> {
+fn parse_char(lex: &mut Lexer) -> Result<u32, Diagnostic> {
     let raw = lex.slice();
     if raw == "''" {
-        return Err(error!(lex.span(), "empty character literal").with_primary_label("here"))
+        return Err(error!(&lex.extras, lex.span(), "empty character literal")
+            .with_primary_label("here"))
     };
     // Strip surrounding quotes.
     let inner = &raw[1..raw.len() - 1];
     decode_char_content(inner).ok_or_else(|| {
-        error!(lex.span(), "invalid character literal: {}", raw)
-            .with_primary_label( format!("cannot decode {}", raw))
+        error!(&lex.extras, lex.span(), "invalid character literal: {}", raw)
+            .with_primary_label(format!("cannot decode {}", raw))
     })
 }
 
 /// Parse a string literal of the form `"..."`. Individual character escapes
 /// are validated; invalid ones produce a diagnostic.
-fn parse_str(lex: &mut Lexer) -> Result<String, NoFileDiagnostic> {
+fn parse_str(lex: &mut Lexer) -> Result<String, Diagnostic> {
     let raw = lex.slice();
     let inner = &raw[1..raw.len() - 1];
     let mut out = String::with_capacity(inner.len());
@@ -156,7 +156,7 @@ fn parse_str(lex: &mut Lexer) -> Result<String, NoFileDiagnostic> {
         }
         // Escape.
         let esc = it.next().ok_or_else(|| {
-            error!(lex.span(), "unterminated escape in string literal")
+            error!(&lex.extras, lex.span(), "unterminated escape in string literal")
                 .with_primary_label("dangling backslash")
         })?;
         match esc {
@@ -170,7 +170,7 @@ fn parse_str(lex: &mut Lexer) -> Result<String, NoFileDiagnostic> {
             'x' => {
                 // \x{HHHHHH}
                 if it.next() != Some('{') {
-                    return Err(error!(lex.span(), "malformed unicode escape")
+                    return Err(error!(&lex.extras, lex.span(), "malformed unicode escape")
                         .with_primary_label("expected `{` after `\\x`"));
                 }
                 let mut hex = String::new();
@@ -179,24 +179,24 @@ fn parse_str(lex: &mut Lexer) -> Result<String, NoFileDiagnostic> {
                         Some('}') => break,
                         Some(h) if h.is_ascii_hexdigit() => hex.push(h),
                         _ => {
-                            return Err(error!(lex.span(), "malformed unicode escape")
+                            return Err(error!(&lex.extras, lex.span(), "malformed unicode escape")
                                 .with_primary_label("expected hex digits and `}`"))
                         }
                     }
                 }
                 let codepoint = u32::from_str_radix(&hex, 16).map_err(|e| {
-                    error!(lex.span(), "invalid unicode escape: {}", e)
+                    error!(&lex.extras, lex.span(), "invalid unicode escape: {}", e)
                         .with_primary_label(e.to_string())
                 })?;
                 if let Some(ch) = char::from_u32(codepoint) {
                     out.push(ch);
                 } else {
-                    return Err(error!(lex.span(), "invalid unicode codepoint: U+{:X}", codepoint)
+                    return Err(error!(&lex.extras, lex.span(), "invalid unicode codepoint: U+{:X}", codepoint)
                         .with_primary_label("not a valid unicode scalar"));
                 }
             }
             other => {
-                return Err(error!(lex.span(), "unknown escape: \\{}", other)
+                return Err(error!(&lex.extras, lex.span(), "unknown escape: \\{}", other)
                     .with_primary_label(format!("unknown escape: \\{}", other)))
             }
         }
@@ -210,7 +210,6 @@ fn decode_char_content(inner: &str) -> Option<u32> {
     let mut chars = inner.chars();
     let first = chars.next()?;
     if first != '\\' {
-        // Single character literal.
         if chars.next().is_some() {
             return None;
         }
