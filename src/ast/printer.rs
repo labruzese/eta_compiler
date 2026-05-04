@@ -29,7 +29,7 @@ macro_rules! impl_display {
 
 impl_display!(
     Program, Interface, Use, Definition, MethodDecl, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
-    AssignLeft, Var, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
+    AssignLeft, LValue, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
 );
 
 impl<T: Display> Display for Spanned<T> {
@@ -218,18 +218,19 @@ impl ToDoc for Assignment {
 impl ToDoc for AssignLeft {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
-            AssignLeft::Var(v) => v.to_doc(),
+            AssignLeft::LValue(v) => v.to_doc(),
             AssignLeft::Decl(d) => d.to_doc(),
             AssignLeft::Ignore => RcDoc::text("_"),
         }
     }
 }
 
-impl ToDoc for Var {
+impl ToDoc for LValue {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
-            Var::Index { of, index } => parens([RcDoc::text("[]"), of.to_doc(), index.to_doc()]),
-            Var::Id(id) => atom(id),
+            LValue::Index { of, index } => parens([RcDoc::text("[]"), of.to_doc(), index.to_doc()]),
+            LValue::Id(id) => atom(id),
+            LValue::ProcCall(pc) => pc.to_doc(),
         }
     }
 }

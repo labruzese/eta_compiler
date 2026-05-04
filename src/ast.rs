@@ -132,18 +132,19 @@ pub enum Assignment {
 
 #[derive(Debug, Clone)]
 pub enum AssignLeft {
-    Var(Var),
+    LValue(LValue),
     Decl(Decl),
     Ignore,
 }
 
 #[derive(Debug, Clone)]
-pub enum Var {
+pub enum LValue {
     Index {
-        of: Box<Spanned<Var>>,
+        of: Box<Spanned<LValue>>,
         index: Spanned<Expr>,
     },
     Id(Id),
+    ProcCall(ProcCall),
 }
 
 #[derive(Debug, Clone)]

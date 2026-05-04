@@ -17,7 +17,8 @@ pub struct Logger {
 
 impl Logger {
     pub fn new(flags: &Flags) -> Self {
-        if flags.lex || flags.parse {
+        if (flags.lex || flags.parse) 
+        && flags.diag_path != PathBuf::from("-") {
             std::fs::create_dir_all(&flags.diag_path)
                 .expect("unable to create diagnostic output directory");
         }
@@ -88,7 +89,7 @@ impl Logger {
 }
 
 fn open_log(root: &Path, file_name: &str, ext: &str) -> BufWriter<File> {
-    let path = if root == "-" {
+    let path = if root.eq(&PathBuf::from("-")){
         PathBuf::from("/dev/stdout")
     } else { 
         root.join(file_name).with_extension(ext)

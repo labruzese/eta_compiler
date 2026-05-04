@@ -17,7 +17,7 @@
 //   * `sp!(file_id, l, r, node)` — Rust macro: shorthand for
 //     `Spanned::new(EtaSpan::new(file_id, l, r), node)`.
 //
-// Rules that are *self-referential* (Expr, Type, Var, Stmt) return
+// Rules that are *self-referential* (Expr, Type, LValue, Stmt) return
 // `Spanned<T>` directly and use `sp!()` internally.
 // Simpler rules (Use, Decl, Block, AssignLeft, GlobalValue) return
 // bare types and are wrapped with `Sp<T>` at their call-sites.
@@ -328,8 +328,8 @@ IdentStartStmt: Spanned<Stmt> = {
     },
 
     // var [, ...] = ...
-    <l:@L> <var:Var> <rest:AssignTail> <r:@R> => {
-        let head = Spanned::new(var.span.clone(), AssignLeft::Var(var.node));
+    <l:@L> <var:LValue> <rest:AssignTail> <r:@R> => {
+        let head = Spanned::new(var.span.clone(), AssignLeft::LValue(var.node));
         let (tail, values) = rest;
         let targets: Vec<_> = std::iter::once(head).chain(tail).collect();
         sp!(file_id, l, r, Stmt::Assignment(Assignment::Assignment { targets, values }))
@@ -370,19 +370,27 @@ AssignTail: (Vec<Spanned<AssignLeft>>, Vec<Spanned<Expr>>) = {
 // Assignment targets after the first one in a `,`-list.
 AssignLeft: AssignLeft = {
     <id:"ident"> ":" <typ:Type> => AssignLeft::Decl(Decl::Decl { id, typ }),
-    <var:Var>                   => AssignLeft::Var(var.node),
+    <var:LValue>                   => AssignLeft::LValue(var.node),
     "_"                         => AssignLeft::Ignore,
 };
 
-// A potentially indexed id. Returns Spanned because Var::Index is
-// self-referential (of: Box<Spanned<Var>>).
-Var: Spanned<Var> = {
+// Anything that can syntactically be an lvalue. Returns Spanned because LValue::Index is
+// self-referential (of: Box<Spanned<LValue>>).
+LValue: Spanned<LValue> = {
     <l:@L> <id:"ident"> <indices:Index*> <r:@R> => {
         let span = EtaSpan::new(file_id.clone(), l, r);
-        let var = indices.into_iter().rev().fold(Var::Id(id), |inner, i|
-            Var::Index { of: Box::new(Spanned::new(span.clone(), inner)), index: i }
+        let var = indices.into_iter().rev().fold(LValue::Id(id), |inner, i|
+            LValue::Index { of: Box::new(Spanned::new(span.clone(), inner)), index: i }
         );
         Spanned::new(span, var)
+    },
+    <l:@L> <id:"ident"> "(" <a:Comma<Expr>> ")" <indicies:Index*> <r:@R> => {
+	let span = EtaSpan::new(file_id.clone(), l, r);
+	let var = indicies.into_iter().rev().fold(
+	    LValue::ProcCall(ProcCall::ProcCall { id, args: a }),
+	    |inner, i| LValue::Index { of: Box::new(Spanned::new(span.clone(), inner)), index: i }
+	);
+	Spanned::new(span, var)
     },
 };
 
