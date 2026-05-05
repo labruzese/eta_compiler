@@ -3,7 +3,7 @@ use pretty::{Doc, RcDoc};
 use std::fmt::{self, Display};
 
 const WIDTH: usize = 80;
-const INDENT: isize = 2;
+const INDENT: isize = 1;
 
 /// Turn any `Display` value into a one-line doc.
 fn atom<T: fmt::Display>(x: T) -> RcDoc<'static, ()> {
