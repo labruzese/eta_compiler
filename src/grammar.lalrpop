@@ -370,27 +370,27 @@ AssignTail: (Vec<Spanned<AssignLeft>>, Vec<Spanned<Expr>>) = {
 // Assignment targets after the first one in a `,`-list.
 AssignLeft: AssignLeft = {
     <id:"ident"> ":" <typ:Type> => AssignLeft::Decl(Decl::Decl { id, typ }),
-    <var:LValue>                   => AssignLeft::LValue(var.node),
+    <var:LValue>                => AssignLeft::LValue(var.node),
     "_"                         => AssignLeft::Ignore,
 };
 
 // Anything that can syntactically be an lvalue. Returns Spanned because LValue::Index is
 // self-referential (of: Box<Spanned<LValue>>).
 LValue: Spanned<LValue> = {
-    <l:@L> <id:"ident"> <indices:Index*> <r:@R> => {
+    <l:@L> <id:"ident"> <r:@R> => {
         let span = EtaSpan::new(file_id.clone(), l, r);
-        let var = indices.into_iter().rev().fold(LValue::Id(id), |inner, i|
-            LValue::Index { of: Box::new(Spanned::new(span.clone(), inner)), index: i }
-        );
-        Spanned::new(span, var)
+	let lval = LValue::Id(id);
+	Spanned::new(span, lval)
     },
-    <l:@L> <id:"ident"> "(" <a:Comma<Expr>> ")" <indicies:Index*> <r:@R> => {
-	let span = EtaSpan::new(file_id.clone(), l, r);
-	let var = indicies.into_iter().rev().fold(
-	    LValue::ProcCall(ProcCall::ProcCall { id, args: a }),
-	    |inner, i| LValue::Index { of: Box::new(Spanned::new(span.clone(), inner)), index: i }
-	);
-	Spanned::new(span, var)
+    <l:@L> <id:"ident"> "(" <args:Comma<Expr>> ")" <r:@R> => {
+        let span = EtaSpan::new(file_id.clone(), l, r);
+	let lval = LValue::ProcCall(ProcCall::ProcCall { id, args });
+	Spanned::new(span, lval)
+    },
+    <l:@L> <of:LValue> <index:Index> <r:@R> => {
+        let span = EtaSpan::new(file_id.clone(), l, r);
+	let lval = LValue::Index { of: Box::new(of), index };
+	Spanned::new(span, lval)
     },
 };
 
