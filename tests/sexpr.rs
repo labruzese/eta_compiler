@@ -131,6 +131,7 @@ pub fn parse_tokens<'a>(tokens: &'a [String]) -> Result<(Sexpr, &'a [String]), S
 pub struct SexprDiff {
     /// Lines that matched (printed as-is for context)
     pub matching_prefix: Vec<String>,
+    pub matching_suffix: Vec<String>,   
     /// First expected line that diverged
     pub expected_line: String,
     /// First actual line that diverged
@@ -180,7 +181,10 @@ pub fn diff_sexpr(expected: &Sexpr, actual: &Sexpr) -> Option<SexprDiff> {
     for (i, (e, a)) in exp_lines.iter().zip(act_lines.iter()).enumerate() {
         if e != a {
             return Some(SexprDiff {
-                matching_prefix: exp_lines[i.saturating_sub(3)..i]
+                matching_prefix: exp_lines[i.saturating_sub(BEFORE)..i]
+                    .iter().map(|s| s.to_string()).collect(),
+                matching_suffix: exp_lines[(i + 1).min(exp_lines.len())
+                    ..(i + 1 + AFTER).min(exp_lines.len())]
                     .iter().map(|s| s.to_string()).collect(),
                 expected_line: e.to_string(),
                 actual_line: a.to_string(),
@@ -192,7 +196,10 @@ pub fn diff_sexpr(expected: &Sexpr, actual: &Sexpr) -> Option<SexprDiff> {
     if exp_lines.len() != act_lines.len() {
         let i = exp_lines.len().min(act_lines.len());
         return Some(SexprDiff {
-            matching_prefix: exp_lines[i.saturating_sub(3)..i]
+            matching_prefix: exp_lines[i.saturating_sub(BEFORE)..i]
+                .iter().map(|s| s.to_string()).collect(),
+            matching_suffix: exp_lines[(i + 1).min(exp_lines.len())
+                ..(i + 1 + AFTER).min(exp_lines.len())]
                 .iter().map(|s| s.to_string()).collect(),
             expected_line: exp_lines.get(i).unwrap_or(&"<eof>").to_string(),
             actual_line: act_lines.get(i).unwrap_or(&"<eof>").to_string(),
@@ -224,6 +231,9 @@ fn highlight_diff(label: &str, line: &str, start: usize, end: usize) -> String {
     )
 }
 
+const BEFORE: usize = 5;
+const AFTER:  usize = 3;
+
 impl fmt::Display for SexprDiff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ctx_start_line = self.line_no - self.matching_prefix.len();
@@ -243,6 +253,11 @@ impl fmt::Display for SexprDiff {
             f, "       │ {}",
             highlight_diff("\x1b[31mact:\x1b[0m ", &self.actual_line, as_, ae),
         )?;
+
+        let suffix_start_line = self.line_no + 1;
+        for (i, line) in self.matching_suffix.iter().enumerate() {
+            writeln!(f, "  {:>4} │ {line}", suffix_start_line + i)?;
+        }
         Ok(())
     }
 }
