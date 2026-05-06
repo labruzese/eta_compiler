@@ -191,7 +191,7 @@ Method: Method = {
 // Globals can be initialised to an integer literal (possibly
 // negated) or a boolean literal. Array globals cannot be initialised.
 GlobDecl: GlobDecl = {
-    <id:"ident"> ":" <typ:Type> <val:("=" <Sp<GlobalValue>>)?> =>
+    <id:"ident"> ":" <typ:GlobDeclType> <val:("=" <Sp<GlobalValue>>)?> =>
         GlobDecl::GlobDecl { id, typ, val },
 };
 
@@ -212,19 +212,45 @@ Decl: Decl = {
 // Returns Spanned<Type> directly because array types are
 // self-referential (of: Box<Spanned<Type>>).
 Type: Spanned<Type> = {
-    <l:@L> <base:BaseType> <dims:TypeDim*> <r:@R> => {
-        let span = EtaSpan::new(file_id.clone(), l, r);
-        let ty = dims.into_iter().rev().fold(base, |inner, d| match d {
-            Some(e) => Type::SizedArray { of: Box::new(Spanned::new(span.clone(), inner)), size: e },
-            None    => Type::UnsizedArray { of: Box::new(Spanned::new(span.clone(), inner)) },
-        });
-        Spanned::new(span, ty)
-    },
+    <l:@L> <base:BaseType> <sized_dims:SizedArrayIndex*> <unsized_dims:UnsizedArrayIndex*> <r:@R> 
+	=> {
+	    let span = EtaSpan::new(file_id.clone(), l, r);
+	    let ty = sized_dims
+		.into_iter()
+		.chain(unsized_dims.into_iter())
+		.rev()
+		.fold(base, |inner, d| match d {
+		    Some(e) => Type::SizedArray   { of: Box::new(Spanned::new(span.clone(), inner)), size: e },
+		    None    => Type::UnsizedArray { of: Box::new(Spanned::new(span.clone(), inner)) },
+		});
+	    Spanned::new(span, ty)
+	},
 };
 
-TypeDim: Option<Spanned<Expr>> = {
-    "[" <e:Expr?> "]" => e,
-};
+// can't have sized arrays in global decls
+// since arrays can't be init'd
+GlobDeclType: Spanned<Type> = {
+    <l:@L> <base:BaseType> <unsized_dims:UnsizedArrayIndex*> <r:@R> 
+	=> {
+	    let span = EtaSpan::new(file_id.clone(), l, r);
+	    let ty = unsized_dims
+		.into_iter()
+		.rev()
+		.fold(base, |inner, d| match d {
+		    Some(e) => panic!("grammar shouldn't match an sized array in a global decl"),
+		    None    => Type::UnsizedArray { of: Box::new(Spanned::new(span.clone(), inner)) },
+		});
+	    Spanned::new(span, ty)
+	},
+}
+
+SizedArrayIndex: Option<Spanned<Expr>> = {
+    "[" <e:Expr> "]" => Some(e),
+}
+
+UnsizedArrayIndex: Option<Spanned<Expr>> = {
+    "[" "]" => None,
+}
 
 BaseType: Type = {
     "int"  => Type::Int,

@@ -204,7 +204,12 @@ fn parse_str(lex: &mut Lexer) -> Result<String, Diagnostic> {
                         }
                         None => {
                             // will always be a closing quote in this context
-                            let (j, _) = it.peek().unwrap(); 
+                            let Some((j, _)) = it.peek() else { 
+                                return Err(
+                                    error!(&lex.extras, base+i..lex.span().end, "unterminated unicode escape")
+                                        .with_primary_label("expected hex digits and '}'")
+                                );
+                            };
                             let s = base + j..base + j + 1;
                             return Err(
                                 error!(&lex.extras, s, "malformed unicode escape")

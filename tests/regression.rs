@@ -33,6 +33,12 @@ fn is_error_output(s: &str) -> bool {
     !trimmed.is_empty() && !trimmed.starts_with('(')
 }
 
+/// Extract the "line:col" prefix from an error string like "2:12 error:..."
+fn error_position(s: &str) -> &str {
+    let s = s.trim();
+    s.find(' ').map_or(s, |i| &s[..i])
+}
+
 fn run_etac(flag: &str, source: &Path) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_etac"))
         .args([flag, "-D", "-", source.to_str().unwrap()])
@@ -89,14 +95,28 @@ fn check_parse(flag: &str, sol_path: &Path) {
     let expected_trimmed = expected_raw.trim();
     let actual_trimmed = actual_raw.trim();
 
-    // If either side is an error message, fall back to plain text comparison
+    // If either side is an error message, just check that both are errors
+    // at the same line:col — the message text doesn't matter.
     if is_error_output(expected_trimmed) || is_error_output(actual_trimmed) {
-        let expected = &normalize(expected_trimmed)[0..1];
-        let actual = &normalize(actual_trimmed)[0..1];
-        if actual != expected {
+        if !is_error_output(expected_trimmed) {
             panic!(
-                "error output mismatch for {}:\n  expected: {expected}\n    actual: {actual}",
-                sol_path.display()
+                "parse mismatch for {}:\n  expected sexpr but got error\n  actual: {actual_trimmed}",
+                sol_path.display(),
+            );
+        }
+        if !is_error_output(actual_trimmed) {
+            panic!(
+                "parse mismatch for {}:\n  expected error: {expected_trimmed}\n  but got sexpr:  {}",
+                sol_path.display(),
+                &actual_trimmed[..actual_trimmed.len().min(200)],
+            );
+        }
+        let exp_pos = error_position(expected_trimmed);
+        let act_pos = error_position(actual_trimmed);
+        if exp_pos != act_pos {
+            panic!(
+                "error location mismatch for {}:\n  expected: {expected_trimmed}\n    actual: {actual_trimmed}",
+                sol_path.display(),
             );
         }
         return;
