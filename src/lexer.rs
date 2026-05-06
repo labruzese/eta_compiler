@@ -287,8 +287,10 @@ fn decode_char_content(inner: &str) -> Option<u32> {
             if chars.next().is_some() {
                 return None;
             }
-            u32::from_str_radix(&hex, 16).ok()
-        }
+            u32::from_str_radix(&hex, 16)
+                .ok()
+                .filter(|&cp| char::from_u32(cp).is_some())
+        },
         _ => None,
     }
 }
