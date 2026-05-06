@@ -1,0 +1,7 @@
+integer: int = 0
+boolean: bool = true
+uses: int = 1
+iff: int = 2
+whileLoop: int = 3
+returning: int = 4
+lengths: int = 5

@@ -1,0 +1,35 @@
+1:1 id integer
+1:8 :
+1:10 int
+1:14 =
+1:16 integer 0
+2:1 id boolean
+2:8 :
+2:10 bool
+2:15 =
+2:17 true
+3:1 id uses
+3:5 :
+3:7 int
+3:11 =
+3:13 integer 1
+4:1 id iff
+4:4 :
+4:6 int
+4:10 =
+4:12 integer 2
+5:1 id whileLoop
+5:10 :
+5:12 int
+5:16 =
+5:18 integer 3
+6:1 id returning
+6:10 :
+6:12 int
+6:16 =
+6:18 integer 4
+7:1 id lengths
+7:8 :
+7:10 int
+7:14 =
+7:16 integer 5

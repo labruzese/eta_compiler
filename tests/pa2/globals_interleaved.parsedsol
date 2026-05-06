@@ -1,0 +1,6 @@
+(()
+ ((:global x int 1)
+  (f () () ())
+  (:global y int 2)
+  (g () () ())
+  (:global z bool true)))

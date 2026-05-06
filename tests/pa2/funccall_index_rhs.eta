@@ -1,0 +1,5 @@
+f(): int {
+    x: int = g()[0]
+    y: int = g(1, 2)[h()]
+    return x + y
+}

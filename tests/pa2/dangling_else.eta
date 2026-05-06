@@ -1,0 +1,4 @@
+f(a: bool, b: bool) {
+    x: int = 0
+    if a if b x = 1 else x = 2
+}
