@@ -193,8 +193,8 @@ Block: Block = {
 
 // can end with return
 FuncBlock: Block = {
-    "{" <mut stmts:(<Stmt> ";"?)*> <r:Sp<ReturnStmt>> "}" => {
-	stmts.extend(vec![Stmt::ReturnStmt(r)]);
+    "{" <mut stmts:(<Stmt> ";"?)*> <r:Sp<ReturnStmt>?> "}" => {
+	if let Some(r) = r { stmts.extend(vec![Stmt::ReturnStmt(r)]); }
 	Block { stmts }
     },
 };
@@ -228,11 +228,11 @@ WhileStmtOpen: WhileStmt = {
 
 // nothing for else to match
 StmtClosed: Stmt = {
+    DeclStmt,
     <asgnmt:Sp<Assignment>> 	 => Stmt::Assignment(asgnmt),
     <ifstmt:Sp<IfStmtClosed>> 	 => Stmt::IfStmt(ifstmt),
     <wlstmt:Sp<WhileStmtClosed>> => Stmt::WhileStmt(wlstmt),
     <stmts:Sp<Block>>  		 => Stmt::Block(stmts),
-    <mdecl:CommaPlus<Sp<Decl>>>  => Stmt::Decls(mdecl),
     <procc:Sp<ProcCall>> 	 => Stmt::ProcCall(procc),
 };
 
