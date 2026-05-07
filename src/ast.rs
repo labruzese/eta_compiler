@@ -1,11 +1,55 @@
+/// ┌─────────────────────────── AST Structure ─────────────────────────────┐
+/// │                                                                       │
+/// │  Program                            Interface                         │
+/// │  ├── Use*                           └── MethodDecl*                   │
+/// │  │   └── id                             ├── id                        │
+/// │  └── Definition*                        ├── params: Decl*             │
+/// │      ├── Method                         └── ret_types: Type*          │
+/// │      │   ├── id                                                       │
+/// │      │   ├── params: Decl*          Type                              │
+/// │      │   │   ├── id                 ├── Int                           │
+/// │      │   │   └── typ: Type          ├── Bool                          │
+/// │      │   ├── ret_types: Type*       ├── SizedArray(Type, Expr)        │
+/// │      │   └── body: Block            └── UnsizedArray(Type)            │
+/// │      └── GlobDecl                                                     │
+/// │          ├── id                     Expr                              │
+/// │          ├── typ: Type              ├── Id                            │
+/// │          └── val?: Value            ├── Lit                           │
+/// │              ├── IntLit             │   ├── IntLit                    │
+/// │              └── BoolLit            │   ├── BoolLit                   │
+/// │                                     │   ├── CharLit                   │
+/// │  Block                              │   └── ArrLit                    │
+/// │  └── Stmt*                          │       ├── StringLit             │
+/// │      ├── Assignment                 │       └── Array(Expr*)          │
+/// │      │   ├── targets: AssignLeft*   ├── Index(Expr, Expr)             │
+/// │      │   │   ├── LValue             ├── Call(ProcCall)                │
+/// │      │   │   │   ├── Id             ├── Length(Expr)                  │
+/// │      │   │   │   ├── Index          ├── Unary(UOp, Expr)              │
+/// │      │   │   │   └── ProcCall       └── Binary(BinOp, Expr, Expr)     │
+/// │      │   │   ├── Decl                                                 │
+/// │      │   │   └── Ignore             UOp: Neg | Not                    │
+/// │      │   └── values: Expr*          BinOp: Add | Sub | Mul |          │
+/// │      ├── IfStmt                        HighMul | Div | Mod |          │
+/// │      │   ├── cond: Expr                     Eq | Neq | Lt  | Gt |     │
+/// │      │   ├── then: Stmt                     Le | Ge | And | Or        │
+/// │      │   └── else?: Stmt                                              │
+/// │      ├── WhileStmt                                                    │
+/// │      │   ├── cond: Expr                                               │
+/// │      │   └── body: Stmt                                               │
+/// │      ├── ReturnStmt(Expr*)                                            │
+/// │      ├── ProcCall(id, Expr*)                                          │
+/// │      ├── Block                                                        │
+/// │      └── Decls(Decl*)                                                 │
+/// └───────────────────────────────────────────────────────────────────────┘
+
 use crate::sources::span::EtaSpan;
 
-/// Shorthand for wrapping an AST node in a `Spanned` with a file-aware span.
-/// Usage: `sp!(file_id, start, end, node)`
+/// helper macro for grammar.lalrpop
+/// file_id will be in scope, this will wrap a node with a span
 #[macro_export]
 macro_rules! sp {
-    ($file:expr, $l:expr, $r:expr, $node:expr) => {
-        Spanned::new(EtaSpan::new($file.clone(), $l, $r), $node)
+    ($fid:expr, $l:expr, $node:expr, $r:expr) => {
+        Spanned::new(EtaSpan::new($fid.clone(),$l, $r), $node)
     };
 }
 
@@ -30,169 +74,175 @@ pub type BoolLit = bool;
 pub type CharLit = char;
 
 #[derive(Debug, Clone)]
-pub enum Program {
-    Prog {
-        uses: Vec<Spanned<Use>>,
-        definitions: Vec<Spanned<Definition>>,
-    },
+pub struct Program {
+    pub uses: Vec<Spanned<Use>>,
+    pub definitions: Vec<Definition>, 
 }
 
-pub enum Interface {
-    Interface(Vec<Spanned<MethodDecl>>)
+pub struct Interface {
+    pub method_decls: Vec<Spanned<MethodDecl>>
 }
 
 #[derive(Debug, Clone)]
-pub enum Use {
-    Id(Id),
+pub struct Use {
+    pub id: Spanned<Id>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Definition {
-    Method(Method),
-    GlobDecl(GlobDecl),
+    Method(Spanned<Method>),
+    GlobDecl(Spanned<GlobDecl>),
     Error,
 }
 
 #[derive(Debug, Clone)]
-pub enum MethodDecl {
-    MethodDecl {
-        id: Id,
-        params: Vec<Spanned<Decl>>,
-        ret_types: Vec<Spanned<Type>>,
-    },
+pub struct MethodDecl {
+    pub id: Spanned<Id>,
+    pub params: Vec<Spanned<Decl>>,
+    pub ret_types: Vec<Type>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Method {
-    Method {
-        id: Id,
-        params: Vec<Spanned<Decl>>,
-        ret_types: Vec<Spanned<Type>>,
-        body: Spanned<Block>,
-    },
+pub struct Method {
+    pub id: Spanned<Id>,
+    pub params: Vec<Spanned<Decl>>,
+    pub ret_types: Vec<Type>,
+    pub body: Spanned<Block>,
 }
 
 #[derive(Debug, Clone)]
-pub enum GlobDecl {
-    GlobDecl {
-        id: Id,
-        typ: Spanned<Type>,
-        val: Option<Spanned<Value>>,
-    },
+pub struct GlobDecl {
+    pub id: Spanned<Id>,
+    pub typ: Type,
+    pub val: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    IntLit(IntLit),
-    BoolLit(BoolLit),
+    IntLit(Spanned<IntLit>),
+    BoolLit(Spanned<BoolLit>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Decl {
-    Decl { id: Id, typ: Spanned<Type> },
+pub struct Decl {
+    pub id: Spanned<Id>,
+    pub typ: Type,
 }
 
 #[derive(Debug, Clone)]
 pub enum Type {
-    SizedArray {
-        of: Box<Spanned<Type>>,
-        size: Spanned<Expr>,
-    },
-    UnsizedArray {
-        of: Box<Spanned<Type>>,
-    },
-    Int,
-    Bool,
+    SizedArray(Spanned<SizedArray>),
+    UnsizedArray(Spanned<UnsizedArray>),
+    Int(Spanned<()>),
+    Bool(Spanned<()>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Block {
-    Block { stmts: Vec<Spanned<Stmt>> },
+pub struct SizedArray {
+    pub of: Box<Type>,
+    pub size: Expr,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnsizedArray {
+    pub of: Box<Type>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Assignment(Assignment),
-    IfStmt(IfStmt),
-    WhileStmt(WhileStmt),
-    ReturnStmt(ReturnStmt),
-    ProcCall(ProcCall),
-    Block(Block),
-    Decls { decls: Vec<Spanned<Decl>> },
+    Assignment(Spanned<Assignment>),
+    IfStmt(Spanned<IfStmt>),
+    WhileStmt(Spanned<WhileStmt>),
+    ReturnStmt(Spanned<ReturnStmt>),
+    ProcCall(Spanned<ProcCall>),
+    Block(Spanned<Block>),
+    Decls(Vec<Spanned<Decl>>),
     Error,
 }
 
 #[derive(Debug, Clone)]
-pub enum Assignment {
-    Assignment {
-        targets: Vec<Spanned<AssignLeft>>,
-        values: Vec<Spanned<Expr>>,
-    },
+pub struct Assignment {
+    pub targets: Vec<AssignLeft>,
+    pub values: Vec<Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub enum AssignLeft {
     LValue(LValue),
-    Decl(Decl),
+    Decl(Spanned<Decl>),
     Ignore,
 }
 
 #[derive(Debug, Clone)]
 pub enum LValue {
-    Index {
-        of: Box<Spanned<LValue>>,
-        index: Spanned<Expr>,
-    },
-    Id(Id),
-    ProcCall(ProcCall),
+    Index(Spanned<LValueIndex>),
+    Id(Spanned<Id>),
+    ProcCall(Spanned<ProcCall>),
 }
 
 #[derive(Debug, Clone)]
-pub enum IfStmt {
-    IfStmt {
-        cond: Spanned<Expr>,
-        then_branch: Box<Spanned<Stmt>>,
-        else_branch: Option<Box<Spanned<Stmt>>>,
-    },
+pub struct LValueIndex {
+    pub of: Box<LValue>,
+    pub index: Expr,
 }
 
 #[derive(Debug, Clone)]
-pub enum WhileStmt {
-    WhileStmt {
-        cond: Spanned<Expr>,
-        body: Box<Spanned<Stmt>>,
-    },
+pub struct IfStmt {
+    pub cond: Expr,
+    pub then_branch: Box<Stmt>,
+    pub else_branch: Option<Box<Stmt>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum ReturnStmt {
-    ReturnStmt { values: Vec<Spanned<Expr>> },
+pub struct WhileStmt {
+    pub cond: Expr,
+    pub body: Box<Stmt>,
 }
 
 #[derive(Debug, Clone)]
-pub enum ProcCall {
-    ProcCall { id: Id, args: Vec<Spanned<Expr>> },
+pub struct ReturnStmt {
+    pub values: Vec<Expr>, 
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcCall {
+    pub id: Spanned<Id>,
+    pub args: Vec<Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Id(Id),
+    Id(Spanned<Id>),
     Lit(Lit),
-    Index {
-        array: Box<Spanned<Expr>>,
-        index: Box<Spanned<Expr>>,
-    },
-    Call(ProcCall),
-    Length(Box<Spanned<Expr>>),
-    Unary {
-        op: UOp,
-        expr: Box<Spanned<Expr>>,
-    },
-    Binary {
-        op: BinOp,
-        left: Box<Spanned<Expr>>,
-        right: Box<Spanned<Expr>>,
-    },
+    Index(Spanned<ExprIndex>),
+    Call(Spanned<ProcCall>),
+    Length(Spanned<Box<Expr>>), //this expr includes extra tokens
+    Unary(Spanned<ExprUOp>),
+    Binary(Spanned<ExprBinOp>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ExprIndex {
+    pub array: Box<Spanned<Expr>>,
+    pub index: Box<Spanned<Expr>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExprUOp {
+    pub op: Spanned<UOp>,
+    pub expr: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExprBinOp {
+    pub op: Spanned<BinOp>,
+    pub left: Box<Expr>,
+    pub right: Box<Expr>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -220,14 +270,14 @@ pub enum BinOp {
 
 #[derive(Debug, Clone)]
 pub enum Lit {
-    IntLit(IntLit),
-    BoolLit(BoolLit),
-    CharLit(CharLit),
+    IntLit(Spanned<IntLit>),
+    BoolLit(Spanned<BoolLit>),
+    CharLit(Spanned<CharLit>),
     ArrLit(ArrLit),
 }
 
 #[derive(Debug, Clone)]
 pub enum ArrLit {
-    StringLit(String),
-    Array(Vec<Spanned<Expr>>),
+    StringLit(Spanned<String>),
+    Array(Vec<Expr>),
 }
