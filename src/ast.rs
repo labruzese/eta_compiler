@@ -133,8 +133,8 @@ pub struct Decl {
 pub enum Type {
     SizedArray(Spanned<SizedArray>),
     UnsizedArray(Spanned<UnsizedArray>),
-    Int(Spanned<()>),
-    Bool(Spanned<()>),
+    Int(EtaSpan),
+    Bool(EtaSpan),
 }
 
 #[derive(Debug, Clone)]
@@ -167,15 +167,15 @@ pub enum Stmt {
 
 #[derive(Debug, Clone)]
 pub struct Assignment {
-    pub targets: Vec<AssignLeft>,
+    pub targets: Vec<Target>,
     pub values: Vec<Expr>,
 }
 
 #[derive(Debug, Clone)]
-pub enum AssignLeft {
+pub enum Target {
     LValue(LValue),
     Decl(Spanned<Decl>),
-    Ignore,
+    Discard(EtaSpan),
 }
 
 #[derive(Debug, Clone)]
@@ -228,8 +228,8 @@ pub enum Expr {
 
 #[derive(Debug, Clone)]
 pub struct ExprIndex {
-    pub array: Box<Spanned<Expr>>,
-    pub index: Box<Spanned<Expr>>,
+    pub array: Box<Expr>,
+    pub index: Box<Expr>,
 }
 
 #[derive(Debug, Clone)]

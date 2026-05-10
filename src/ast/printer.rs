@@ -43,7 +43,7 @@ macro_rules! impl_display {
 
 impl_display!(
     Program, Interface, Use, Definition, MethodDecl, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
-    AssignLeft, LValue, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
+    Target, LValue, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
 );
 
 impl<T: Display> Display for Spanned<T> {
@@ -195,12 +195,12 @@ impl ToDoc for Assignment {
     }
 }
 
-impl ToDoc for AssignLeft {
+impl ToDoc for Target {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
-            AssignLeft::LValue(v) => d!(v),
-            AssignLeft::Decl(d_) => d_.to_doc(),
-            AssignLeft::Ignore => d!("_"),
+            Target::LValue(v) => d!(v),
+            Target::Decl(d_) => d_.to_doc(),
+            Target::Discard(_) => d!("_"),
         }
     }
 }

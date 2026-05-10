@@ -281,6 +281,7 @@ version = "0.1.0"
 dependencies = [
  "ariadne",
  "clap",
+ "either",
  "env_logger",
  "generate_tests",
  "lalrpop",

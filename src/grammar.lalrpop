@@ -1,9 +1,11 @@
 use crate::ast::*;
+use either::Either;
 use crate::sp;
 use crate::lexer::Token;
 use crate::errors::Diagnostic;
 use crate::sources::{FileId, span::EtaSpan};
 use lalrpop_util::ErrorRecovery;
+use crate::error;
 
 grammar(
     file_id: &FileId,
@@ -161,28 +163,52 @@ Type: Type = {
     TypeUnsized,
 }
 
-TypeSized: Type = {
-    <BaseType>,
-    <t:TypeSized> <l:@L> "[" <size:Expr> "]" <r:@R> => 
-	Type::SizedArray(sp!(file_id, l, SizedArray { of: Box::new(t), size }, r)),
-    
+
+SizedDim: (usize, Expr, usize) = {
+    <l:@L> "[" <size:Expr> "]" <r:@R> => (l, size, r)
+};
+UnsizedDim: (usize, usize) = {
+    <l:@L> "[" "]" <r:@R> => (l, r)
 };
 
 TypeUnsized: Type = {
-    <t:TypeSized> <l:@L> "[" "]" <r:@R> => 
-	Type::UnsizedArray(sp!(file_id, l, UnsizedArray { of: Box::new(t) }, r)),
-    <t:TypeUnsized> <l:@L> "[" "]" <r:@R> => 
-	Type::UnsizedArray(sp!(file_id, l, UnsizedArray { of: Box::new(t) }, r)),
+    <base:BaseType> <sdims:SizedDim*> <udims:UnsizedDim+> => {
+        let all: Vec<_> = sdims.into_iter().map(Either::Left)
+            .chain(udims.into_iter().map(Either::Right))
+            .collect();
+        all.into_iter().rev().fold(base, |inner, dim| match dim {
+            Either::Left((l, size, r)) =>
+                Type::SizedArray(sp!(file_id, l, SizedArray { of: Box::new(inner), size }, r)),
+            Either::Right((l, r)) =>
+                Type::UnsizedArray(sp!(file_id, l, UnsizedArray { of: Box::new(inner) }, r)),
+        })
+    }
+};
+
+TypeSized: Type = {
+    <BaseType>,
+    <base:BaseType> <dims:SizedDim+> => {
+        dims.into_iter().rev().fold(base, |inner, (l, size, r)| {
+            Type::SizedArray(sp!(file_id, l, SizedArray { of: Box::new(inner), size }, r))
+        })
+    }
 };
 
 GlobDeclType: Type = {
     <BaseType>,
-    <TypeUnsized>
+    <TypeUnsized>,
+    <base:BaseType> "[" <l:@L> <size:Expr> <r:@R> "]" =>? 
+        Err(error!(
+		file_id,
+		l..r,
+		"Global arrays can't be initialized at the point of declaration")
+	    .with_primary_label("initialization happens here")
+	)?
 };
 
 BaseType: Type = {
-    <l:@L> <s:"int"> <r:@R> 	=> Type::Int(sp!(file_id, l, (), r)),
-    <l:@L> <s:"bool"> <r:@R>	=> Type::Bool(sp!(file_id, l, (), r)),
+    <l:@L> <s:"int"> <r:@R> 	=> Type::Int((file_id, l..r).into()),
+    <l:@L> <s:"bool"> <r:@R>	=> Type::Bool((file_id, l..r).into()),
 }
 
 // ----- Blocks -----
@@ -206,7 +232,7 @@ FuncBlock: Block = {
 Stmt: Stmt = { StmtOpen, StmtClosed }
 
 ReturnStmt: ReturnStmt = {
-    "return" <values:Comma<Expr>> => ReturnStmt { values },
+    "return" <values:Comma<Expr>> ";"? => ReturnStmt { values },
 };
 
 // elses can be matched
@@ -216,7 +242,7 @@ StmtOpen: Stmt = {
 };
 
 IfStmtOpen: IfStmt = {
-    "if" <cond:Expr> <t:StmtOpen> => 
+    "if" <cond:Expr> <t:Stmt> => 
 	IfStmt { cond, then_branch: Box::new(t), else_branch: None },
     "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtOpen> => 
 	IfStmt { cond, then_branch: Box::new(t), else_branch: Some(Box::new(e)) },
@@ -228,12 +254,52 @@ WhileStmtOpen: WhileStmt = {
 
 // nothing for else to match
 StmtClosed: Stmt = {
-    DeclStmt,
-    <asgnmt:Sp<Assignment>> 	 => Stmt::Assignment(asgnmt),
     <ifstmt:Sp<IfStmtClosed>> 	 => Stmt::IfStmt(ifstmt),
     <wlstmt:Sp<WhileStmtClosed>> => Stmt::WhileStmt(wlstmt),
     <stmts:Sp<Block>>  		 => Stmt::Block(stmts),
-    <procc:Sp<ProcCall>> 	 => Stmt::ProcCall(procc),
+
+    <l:@L> <ts:Targets> "=" <values:CommaPlus<Expr>> <r:@R> => 
+	Stmt::Assignment(sp!(file_id, l, Assignment { targets: ts, values }, r)),
+
+    // ProcCall + Decls (no catch-all for bare lvalues)
+    <l:@L> <ts:Targets> <r:@R> =>? {
+	// Single proc call → valid statement
+	if matches!(ts.as_slice(), [Target::LValue(LValue::ProcCall(_))]) {
+	    let Target::LValue(LValue::ProcCall(pc)) = ts.into_iter().next().unwrap() else { unreachable!() };
+	    return Ok(Stmt::ProcCall(pc));
+	}
+
+	// No decls at all → this isn't a statement, reject
+	if !ts.iter().any(|t| matches!(t, Target::Decl(_))) {
+	    let span = match &ts[0] {
+		Target::LValue(LValue::Index(sn)) => sn.span.range.clone(),
+		Target::LValue(LValue::Id(sn)) => sn.span.range.clone(),
+		Target::LValue(LValue::ProcCall(sn)) => sn.span.range.clone(),
+		Target::Discard(span) => span.range.clone(),
+		_ => unreachable!(),
+	    };
+	    return Err(error!(file_id, span, "expected a statement")
+		    .with_primary_label("not a statement"),
+	    )?;
+	}
+
+	// Has at least one decl — validate the rest are also decls
+	let decls: Result<Vec<_>, _> = ts.into_iter().map(|t| {
+	    let span = match t {
+		Target::Decl(d) => { return Ok(d) },
+		Target::LValue(LValue::Index(sn)) => sn.span.range,
+		Target::LValue(LValue::Id(sn)) => sn.span.range,
+		Target::LValue(LValue::ProcCall(sn)) => sn.span.range,
+		Target::Discard(span) => span.range,
+	    };
+	    Err(error!(file_id, span,
+		"illegal declaration in multi-declaration")
+		.with_primary_label("here")
+		.with_note("multi-decls must all be of the form 'id:type, ...'")
+	    )
+	}).collect();
+	Ok(Stmt::Decls(decls?))
+    },
 };
 
 IfStmtClosed: IfStmt = {
@@ -247,42 +313,39 @@ WhileStmtClosed: WhileStmt = {
 
 // ---- Non-Control Flow Statements ----
 
-
 Decl: Decl = {
     <id:Sp<"ident">> ":" <typ:Type> => Decl { id, typ },
 };
 
-DeclStmt: Stmt = {
-    <mdecl:CommaPlus<Sp<Decl>>> => Stmt::Decls(mdecl),
-    <l:@L> <targets:CommaPlus<Sp<Decl>>> "=" <values:CommaPlus<Expr>> <r:@R> => 
-	Stmt::Assignment(sp!(file_id, l, Assignment { 
-	    targets: targets.into_iter().map(|t| AssignLeft::Decl(sp!(file_id, t.span.range.start, t.node, t.span.range.end))).collect(),
-	    values 
-	}, r))
+Targets: Vec<Target> = {
+    <t:Target> => vec![t],
+    <mut p:Targets> "," <n:Target> => {
+	p.extend(vec![n]);
+	p
+    },
+};
+
+Target: Target = {
+    <d:Sp<Decl>> => Target::Decl(d),
+    <l:LValue> 	 => Target::LValue(l),
+    <s:Sp<"_">>  => Target::Discard(s.span),
+}
+
+LValue: LValue = {
+    <base:LValueBase> <indices:Sp<ArrayIndex>*> => {
+        indices.into_iter().fold(base, |lv, ai| {
+            LValue::Index(sp!(file_id, ai.span.range.start, LValueIndex { of: Box::new(lv), index: ai.node }, ai.span.range.end))
+        })
+    },
+}
+LValueBase: LValue = {
+    <id:Sp<"ident">> => LValue::Id(id),
+    <pc:Sp<ProcCall>> => LValue::ProcCall(pc),
 }
 
 ProcCall: ProcCall = {
     <id:Sp<"ident">> "(" <args:Comma<Expr>> ")" => ProcCall { id, args }
 };
-
-Assignment: Assignment = {
-    <targets:CommaPlus<AssignLeft>> "=" <values:CommaPlus<Expr>> => 
-	Assignment { targets, values }
-}
-
-AssignLeft: AssignLeft = {
-    // classified as a DeclStmt for LR(1) reasons
-    //<decl:Sp<Decl>> => AssignLeft::Decl(decl),
-    <lv:LValue> => AssignLeft::LValue(lv),
-    "_" => AssignLeft::Ignore,
-}
-
-LValue: LValue = {
-    <lv:LValue> <ai:Sp<ArrayIndex>> => 
-	LValue::Index(sp!(file_id, ai.span.range.start, LValueIndex { of: Box::new(lv), index: ai.node }, ai.span.range.end)),
-    <id:Sp<"ident">> => LValue::Id(id),
-    <pc:Sp<ProcCall>> => LValue::ProcCall(pc),
-}
 
 #[inline] ArrayIndex: Expr = { "[" <Expr> "]" }
 
@@ -359,13 +422,25 @@ Expr: Expr = {
 
 // ---- Primary: atoms, postfix indexing, parens. ----
 Primary: Expr = {
+    <array:PrimaryBase> <indices:Sp<ArrayIndex>*> => {
+        indices.into_iter().fold(array, |lv, ai| {
+	    Expr::Index(sp!(
+		file_id,
+		ai.span.range.start,
+		ExprIndex { array: Box::new(lv), index: Box::new(ai.node) },
+		ai.span.range.end
+	    ))
+        })
+    },
+};
+
+PrimaryBase: Expr = {
     <lit:Lit>                            			=> Expr::Lit(lit),
     <id:Sp<"ident">>                         			=> Expr::Id(id),
     <l:@L> <id:Sp<"ident">> "(" <a:Comma<Expr>> ")" <r:@R>	=> Expr::Call(sp!(file_id, l, ProcCall { id, args: a }, r)),
     <l:@L> "length" "(" <e:Expr> ")" <r:@R>     		=> Expr::Length(sp!(file_id, l, Box::new(e), r)),
-    <l:@L> <array:Sp<Primary>> <index:Sp<ArrayIndex>> <r:@R>	=> Expr::Index(sp!(file_id, l, ExprIndex { array: Box::new(array), index: Box::new(index) }, r)),
     "(" <Expr> ")",
-};
+}
 
 Lit: Lit = {
     <l:@L> <n:"intlit"> <r:@R>          => Lit::IntLit(sp!(file_id, l, n as i128, r)),
