@@ -12,7 +12,9 @@ use sources::SourceId;
 
 use crate::sources::{InterfaceId};
 
-fn main() {
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
     env_logger::init();
 
     let mut ctx = Context::new(cli::parse_flags());
@@ -27,7 +29,7 @@ fn main() {
                     errors::Level::Error,
                     format!("non-UTF8 file name {}", file.to_string_lossy())
                 );
-                return;
+                return ExitCode::FAILURE;
         };
 
         match file.extension().map(|x| x.to_str().unwrap()) {
@@ -62,7 +64,9 @@ fn main() {
                 for d in diags {
                     errors::emit(&mut ctx.files, d);
                 }
+                return ExitCode::FAILURE
             }
         }
     }
+    ExitCode::SUCCESS
 }
