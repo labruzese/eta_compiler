@@ -1,4 +1,3 @@
-use crate::ast;
 use crate::cli::Flags;
 use crate::sources::FileId;
 use std::cell::RefCell;

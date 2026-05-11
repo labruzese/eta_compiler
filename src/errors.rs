@@ -101,4 +101,3 @@ impl ariadne::Cache<()> for NoCache {
         Some("")
     }
 }
-
