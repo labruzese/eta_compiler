@@ -1,0 +1,9 @@
+[package]
+name = "etac_span"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+ariadne.workspace       = true
+unicode-width.workspace = true

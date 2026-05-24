@@ -1,0 +1,9 @@
+[package]
+name = "etac_ast"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+etac_span.workspace = true
+pretty.workspace    = true

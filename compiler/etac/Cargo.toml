@@ -1,0 +1,14 @@
+[package]
+name = "etac"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+etac_driver.workspace  = true
+etac_session.workspace = true
+env_logger.workspace   = true
+
+[dev-dependencies]
+generate_tests.workspace  = true
+similar-asserts.workspace = true

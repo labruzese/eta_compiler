@@ -1,0 +1,17 @@
+[package]
+name = "etac_parse"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+etac_ast.workspace     = true
+etac_errors.workspace  = true
+etac_lexer.workspace   = true
+etac_session.workspace = true
+etac_span.workspace    = true
+either.workspace       = true
+lalrpop-util.workspace = true
+
+[build-dependencies]
+lalrpop.workspace = true

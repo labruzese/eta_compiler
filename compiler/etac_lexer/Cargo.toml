@@ -1,0 +1,10 @@
+[package]
+name = "etac_lexer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+etac_errors.workspace = true
+etac_span.workspace   = true
+logos.workspace       = true

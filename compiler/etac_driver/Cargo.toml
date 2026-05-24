@@ -1,0 +1,13 @@
+[package]
+name = "etac_driver"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+etac_ast.workspace     = true
+etac_errors.workspace  = true
+etac_parse.workspace   = true
+etac_session.workspace = true
+etac_span.workspace    = true
+log.workspace          = true

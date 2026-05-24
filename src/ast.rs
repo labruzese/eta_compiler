@@ -11,6 +11,24 @@ macro_rules! sp {
 
 mod printer;
 
+pub enum RawType {
+    Int,
+    Char,
+    Bool,
+    ArraySized {
+        of: Box<RawType>,
+        size: u32,
+    },
+    ArrayUnsized {
+        of: Box<RawType>,
+    },
+}
+
+pub struct Typed<T> {
+    pub typ: RawType,
+    pub node: T,
+}
+
 #[derive(Debug, Clone)]
 /// Wraps an AST node with it's span, both file and location
 pub struct Spanned<T> {

@@ -279,17 +279,77 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 name = "etac"
 version = "0.1.0"
 dependencies = [
- "ariadne",
- "clap",
- "either",
  "env_logger",
+ "etac_driver",
+ "etac_session",
  "generate_tests",
+ "similar-asserts",
+]
+
+[[package]]
+name = "etac_ast"
+version = "0.1.0"
+dependencies = [
+ "etac_span",
+ "pretty",
+]
+
+[[package]]
+name = "etac_driver"
+version = "0.1.0"
+dependencies = [
+ "etac_ast",
+ "etac_errors",
+ "etac_parse",
+ "etac_session",
+ "etac_span",
+ "log",
+]
+
+[[package]]
+name = "etac_errors"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "etac_span",
+]
+
+[[package]]
+name = "etac_lexer"
+version = "0.1.0"
+dependencies = [
+ "etac_errors",
+ "etac_span",
+ "logos",
+]
+
+[[package]]
+name = "etac_parse"
+version = "0.1.0"
+dependencies = [
+ "either",
+ "etac_ast",
+ "etac_errors",
+ "etac_lexer",
+ "etac_session",
+ "etac_span",
  "lalrpop",
  "lalrpop-util 0.21.0",
- "log",
- "logos",
- "pretty",
- "similar-asserts",
+]
+
+[[package]]
+name = "etac_session"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "etac_span",
+]
+
+[[package]]
+name = "etac_span"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
  "unicode-width",
 ]
 
