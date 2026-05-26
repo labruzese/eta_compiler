@@ -52,12 +52,16 @@ where
             parse_callback(logger, file_id, &mut cache.borrow_mut(), parse_result)
         };
 
-        let lexer = etac_lexer::Lexer::new(file_id.clone(), &source).map(tok_map_fn);
-        let parse_res = etac_parse::parse::<_, _, Parser, _>(file_id, lexer, &mut parse_cb_fn);
+        let mut lexer = etac_lexer::Lexer::new(file_id.clone(), &source).map(tok_map_fn);
+        let parse_res = etac_parse::parse::<_, _, Parser, _>(file_id, &mut lexer, &mut parse_cb_fn);
 
         if let Err(diags) = parse_res {
             for d in diags {
                 emit(&mut cache.borrow_mut(), d);
+            }
+            // drain lexer if we have --lex
+            if logger.lex_enabled() {
+                let _ = lexer.for_each(drop);
             }
             return Err(());
         }

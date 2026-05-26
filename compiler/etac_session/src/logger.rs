@@ -28,6 +28,14 @@ impl Logger {
         }
     }
 
+    pub fn lex_enabled(&self) -> bool {
+        self.lexer_writers.borrow_mut().as_mut().is_some()
+    }
+
+    pub fn parse_enabled(&self) -> bool {
+        self.parser_writers.borrow_mut().as_mut().is_some()
+    }
+
     /// Run `f` against the writer for `file` in `bucket`, creating it on
     /// first use. No-op if the bucket is disabled (`None`) or the file's
     /// writer was removed (after an error).

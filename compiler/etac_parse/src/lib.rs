@@ -51,7 +51,7 @@ pub fn parse<
     ParseCallback,
 >(
     file_id: &FileId, // to generate diagnostics
-    lexer: Lexer,
+    lexer: &mut Lexer,
     parse_cb: &mut ParseCallback,
 ) -> Result<Out, Vec<Diagnostic>>
 where
