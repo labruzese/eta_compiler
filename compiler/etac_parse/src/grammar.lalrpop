@@ -111,8 +111,7 @@ pub Interface: Interface = {
 
 UseList: Vec<Spanned<Use>> = {
     <mut h:UseList> <t:Sp<Use>> => {
-	let vt = vec![t];
-        h.extend(vt); 
+        h.push(t); 
 	h
     },
     => vec![],
