@@ -5,4 +5,4 @@
 5:1 string \t
 6:1 character \t
 7:1 string \x{e9}\x{e7}
-8:1 error:malformed/invalid escape sequence
+8:3 error:malformed/invalid escape sequence

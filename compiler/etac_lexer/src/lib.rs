@@ -241,6 +241,14 @@ fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
                     }
                 }
 
+                if hex.is_empty() {
+                    let s = base + i..base + ei + 3;
+                    return Err(
+                        error!(&lex.extras, s; "empty unicode escape")
+                            .with_primary_label("expected at least one hex digit between `{` and `}`"),
+                    );
+                }
+
                 let hex_span = {
                     let start = base + hex_start.unwrap_or(ei + 2);
                     start..start + hex.len()

@@ -1,1 +1,1 @@
-1:1 error:invalid unicode escape: cannot parse integer from empty string
+1:2 error:invalid unicode escape: cannot parse integer from empty string

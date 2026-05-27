@@ -1,1 +1,1 @@
-1:1 error:invalid unicode codepoint: U+D800
+1:5 error:invalid unicode codepoint: U+D800
