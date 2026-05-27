@@ -75,7 +75,7 @@ impl Sources {
         let source = &map.get(id).unwrap().source;
         // zero indexed
         let (_line, linen, coln) = source
-            .get_offset_line(offset)
+            .get_byte_line(offset)
             .expect("requested line/col is out of bounds");
         Ok((linen+1, coln+1))
     }
