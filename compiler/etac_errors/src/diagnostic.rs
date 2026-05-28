@@ -14,7 +14,7 @@ pub struct Diagnostic {
 impl Diagnostic {
     pub fn new(level: Level, span: EtaSpan, message: impl Into<String>) -> Self {
         Self {
-            level: Level::Error,
+            level,
             code: None,
             message: message.into(),
             labels: Vec::new(),
