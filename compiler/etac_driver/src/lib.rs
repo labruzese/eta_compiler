@@ -85,7 +85,7 @@ fn token_callback(logger: &Logger, file_id: &FileId, cache: &Sources, lex_result
         },
         Err(diag) => {
             let loc = cache.lc_index(file_id, diag.loc.as_ref().expect("lexcial error must have location").range.start)?;
-            logger.log_lexical_error(file_id, loc, &diag.message)?;
+            if diag.level == etac_errors::Level::Error { logger.log_lexical_error(file_id, loc, &diag.message)? };
         },
     }
     Ok(())
@@ -96,7 +96,7 @@ fn parse_callback<O: std::fmt::Display>(logger: &Logger, file_id: &FileId, cache
         Ok(out) => logger.log_parse(file_id, out)?,
         Err(diag) => {
             let loc = cache.lc_index(file_id, diag.loc.as_ref().expect("syntactic error must have location").range.start)?;
-            logger.log_syntactic_error(file_id, loc, &diag.message)?;
+            if diag.level == etac_errors::Level::Error { logger.log_syntactic_error(file_id, loc, &diag.message)? };
         },
     }
     Ok(())
