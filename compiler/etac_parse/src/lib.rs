@@ -57,15 +57,13 @@ pub fn parse<
 where
     Lexer: Iterator<Item = Result<(usize, Token, usize), Diagnostic>>,
     Parser: IParser<Out>,
-    ParseCallback: FnMut(&Result<Out, Diagnostic>),
+    ParseCallback: FnMut(Result<Out, Diagnostic>) -> Result<Out, Diagnostic>,
 {
     let mut recovered = Vec::new();
-    let result = Parser::new()
+    let result = parse_cb(Parser::new()
                     .parse(file_id, &mut recovered, lexer)
-                    .map_err(|e| to_diag(file_id, e));
-
-    parse_cb(&result);
-
+                    .map_err(|e| to_diag(file_id, e)));
+                    
     match result {
         Ok(out) if recovered.is_empty() => return Ok(out),
         Ok(_)                           => Err(recovered.into_iter().map(|r| to_diag(file_id, r.error)).collect()),

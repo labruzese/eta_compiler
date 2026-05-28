@@ -6,56 +6,24 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-type WriterMap = HashMap<FileId, Option<BufWriter<File>>>;
+type WriterMap = HashMap<FileId, BufWriter<File>>;
 
 pub struct Logger {
-    lexer_writers: RefCell<Option<WriterMap>>,
-    parser_writers: RefCell<Option<WriterMap>>,
+    lexer_writers: RefCell<WriterMap>,
+    parser_writers: RefCell<WriterMap>,
     diag_root: PathBuf,
 }
 
 impl Logger {
     pub fn new(flags: &Flags) -> Self {
-        if (flags.lex || flags.parse) 
-        && flags.diag_path != PathBuf::from("-") {
+        if (flags.lex || flags.parse) && flags.diag_path != PathBuf::from("-") {
             std::fs::create_dir_all(&flags.diag_path)
                 .expect("unable to create diagnostic output directory");
         }
         Self {
-            lexer_writers: RefCell::new(flags.lex.then(HashMap::new)),
-            parser_writers: RefCell::new(flags.parse.then(HashMap::new)),
+            lexer_writers: RefCell::new(HashMap::new()),
+            parser_writers: RefCell::new(HashMap::new()),
             diag_root: flags.diag_path.clone(),
-        }
-    }
-
-    pub fn lex_enabled(&self) -> bool {
-        self.lexer_writers.borrow_mut().as_mut().is_some()
-    }
-
-    pub fn parse_enabled(&self) -> bool {
-        self.parser_writers.borrow_mut().as_mut().is_some()
-    }
-
-    /// Run `f` against the writer for `file` in `bucket`, creating it on
-    /// first use. No-op if the bucket is disabled (`None`) or the file's
-    /// writer was removed (after an error).
-    fn with_writer(
-        bucket: &RefCell<Option<WriterMap>>,
-        diag_root: &Path,
-        file: &FileId,
-        ext: &'static str,
-        f: impl FnOnce(&mut BufWriter<File>),
-    ) {
-        let mut guard = bucket.borrow_mut();
-        let Some(writers) = guard.as_mut() else { return; };
-        match writers.get_mut(file) {
-            Some(Some(w)) => f(w),
-            Some(None) => (),
-            None => { 
-                let mut w = open_log(diag_root, file.as_str(), ext);
-                f(&mut w);
-                writers.insert(file.clone(), Some(w)); 
-            },
         }
     }
 
@@ -64,41 +32,57 @@ impl Logger {
         file: &FileId,
         at: (usize, usize),
         token: &impl std::fmt::Display,
-    ) {
-        Self::with_writer(&self.lexer_writers, &self.diag_root, file, "lexed", |w| {
-            writeln!(w, "{}:{} {}", at.0, at.1, token).unwrap();
-        });
-    }
-
-    pub fn log_lexical_error(&self, file: &FileId, at: (usize, usize), message: &str) {
-        Self::with_writer(&self.lexer_writers, &self.diag_root, file, "lexed", |w| {
-            writeln!(w, "{}:{} error:{}", at.0, at.1, message).unwrap();
-        });
+    ) -> Result<(), std::io::Error> {
         let mut guard = self.lexer_writers.borrow_mut();
-        let Some(writers) = guard.as_mut() else { return; };
-        writers.insert(file.clone(), None); // remove writer (only report first error)
+        let w = guard
+            .entry(file.clone())
+            .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".lexed"));
+        writeln!(w, "{}:{} {}", at.0, at.1, token)
     }
 
-    pub fn log_parse(&self, file: &FileId, program: impl std::fmt::Display) {
-        Self::with_writer(&self.parser_writers, &self.diag_root, file, "parsed", |w| {
-            writeln!(w, "{}", program).unwrap();
-        });
+    pub fn log_lexical_error(
+        &self,
+        file: &FileId,
+        at: (usize, usize),
+        message: &str,
+    ) -> Result<(), std::io::Error> {
+        let mut guard = self.lexer_writers.borrow_mut();
+        let w = guard
+            .entry(file.clone())
+            .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".lexed"));
+        writeln!(w, "{}:{} error:{}", at.0, at.1, message)
     }
 
-    pub fn log_syntactic_error(&self, file: &FileId, at: (usize, usize), message: &str) {
-        Self::with_writer(&self.parser_writers, &self.diag_root, file, "parsed", |w| {
-            writeln!(w, "{}:{} error:{}", at.0, at.1, message).unwrap();
-        });
+    pub fn log_parse(
+        &self,
+        file: &FileId,
+        program: impl std::fmt::Display,
+    ) -> Result<(), std::io::Error> {
         let mut guard = self.parser_writers.borrow_mut();
-        let Some(writers) = guard.as_mut() else { return; };
-        writers.insert(file.clone(), None); // remove writer (only report first error)
+        let w = guard
+            .entry(file.clone())
+            .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".parsed"));
+        writeln!(w, "{}", program)
+    }
+
+    pub fn log_syntactic_error(
+        &self,
+        file: &FileId,
+        at: (usize, usize),
+        message: &str,
+    ) -> Result<(), std::io::Error> {
+        let mut guard = self.parser_writers.borrow_mut();
+        let w = guard
+            .entry(file.clone())
+            .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".parsed"));
+        writeln!(w, "{}:{} error:{}", at.0, at.1, message)
     }
 }
 
 fn open_log(root: &Path, file_name: &str, ext: &str) -> BufWriter<File> {
-    let path = if root.eq(&PathBuf::from("-")){
+    let path = if root.eq(&PathBuf::from("-")) {
         PathBuf::from("/dev/stdout")
-    } else { 
+    } else {
         root.join(file_name).with_extension(ext)
     };
 
