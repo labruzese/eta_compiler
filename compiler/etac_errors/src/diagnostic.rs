@@ -83,3 +83,9 @@ impl Default for Diagnostic {
         )
     }
 }
+
+impl From<std::io::Error> for Diagnostic {
+    fn from(value: std::io::Error) -> Self {
+        error!("io error: {}", value.to_string())
+    }
+}
