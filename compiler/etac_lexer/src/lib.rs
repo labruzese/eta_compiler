@@ -15,8 +15,6 @@ pub struct Lexer<'input> {
 }
 impl<'source> Lexer<'source> {
     pub fn new(cache: &'source Sources, file_id: FileId, source: &'source <Token as Logos>::Source) -> Self
-    where
-        <Token as Logos<'source>>::Extras: Default,
     {
         Self { inner: <Token as Logos>::lexer_with_extras(source, (cache, file_id)).spanned() }
     }
@@ -388,7 +386,6 @@ impl fmt::Display for Token {
             Token::Land => write!(f, "&"),
             Token::Lor => write!(f, "|"),
             Token::Error((diag, (line, col))) => write!(f, "{}:{} error:{}", line, col, diag.message)
-            
         }
     }
 }
