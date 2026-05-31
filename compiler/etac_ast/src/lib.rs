@@ -36,7 +36,13 @@ pub struct Program {
 }
 
 pub struct Interface {
-    pub method_decls: Vec<Spanned<MethodDecl>>
+    pub items: Vec<InterfaceItem>,
+}
+
+#[derive(Debug, Clone)]
+pub enum InterfaceItem {
+    Decl(Spanned<MethodDecl>),
+    Error,
 }
 
 #[derive(Debug, Clone)]

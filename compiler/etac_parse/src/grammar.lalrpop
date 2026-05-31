@@ -107,8 +107,13 @@ pub Program: Program = {
 };
 
 pub Interface: Interface = {
-    <method_decls:(Sp<MethodDecl>)+> => Interface { method_decls },
+    <items:InterfaceItem+> => Interface { items },
     <r:@R> =>? Err(error!(f, r..r; "Interface must contain at least one method declaration").with_primary_label("expected declaration").into())
+};
+
+InterfaceItem: InterfaceItem = {
+    <m:Sp<MethodDecl>> => InterfaceItem::Decl(m),
+    ! => { errors.push(<>); InterfaceItem::Error }
 };
 
 UseList: Vec<Spanned<Use>> = {
@@ -141,6 +146,14 @@ MethodDecl: MethodDecl = {
 Method: Method = {
     <decl:Sp<MethodDecl>> <body:Sp<FuncBlock>> => {
 	let MethodDecl { id, params, ret_types } = decl.node;
+	Method { id, params, ret_types, body }
+    },
+    // Recover a broken body while preserving the (already-valid) signature, so
+    // downstream passes can still resolve calls to this method.
+    <decl:Sp<MethodDecl>> <l:@L> <e:!> <r:@R> => {
+	errors.push(e);
+	let MethodDecl { id, params, ret_types } = decl.node;
+	let body = sp!(f, l, Block { stmts: vec![Stmt::Error] }, r);
 	Method { id, params, ret_types, body }
     },
 };

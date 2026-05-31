@@ -42,7 +42,7 @@ macro_rules! impl_display {
 }
 
 impl_display!(
-    Program, Interface, Use, Definition, MethodDecl, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
+    Program, Interface, InterfaceItem, Use, Definition, MethodDecl, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
     Target, LValue, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
 );
 
@@ -81,8 +81,17 @@ impl ToDoc for Program {
 impl ToDoc for Interface {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         parens([
-            parens(docs!(self.method_decls))
+            parens(docs!(self.items))
         ])
+    }
+}
+
+impl ToDoc for InterfaceItem {
+    fn to_doc(&self) -> RcDoc<'static, ()> {
+        match self {
+            InterfaceItem::Decl(d) => d!(d),
+            InterfaceItem::Error => d!("Error"),
+        }
     }
 }
 

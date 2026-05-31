@@ -223,4 +223,43 @@ mod tests {
             p.messages()
         );
     }
+
+    #[test]
+    fn broken_body_preserves_method_signature() {
+        let p = expect_recovered::<_, ProgramParser>("main() { x:int = 3", "eta");
+        let sexpr = p.output_sexpr().unwrap();
+        assert!(
+            sexpr.contains("(main () ()"),
+            "method signature must survive a broken body: {sexpr}"
+        );
+        assert!(sexpr.contains("Error"), "the broken body should be marked: {sexpr}");
+    }
+
+    #[test]
+    fn broken_body_does_not_eat_following_method() {
+        let p = expect_recovered::<_, ProgramParser>("f() { ) ) ) }\ng() { return }", "eta");
+        let sexpr = p.output_sexpr().unwrap();
+        assert!(sexpr.contains("(f () () (Error))"), "f recovers with its signature: {sexpr}");
+        assert!(sexpr.contains("(g () () ((return)))"), "g is untouched: {sexpr}");
+    }
+
+    #[test]
+    fn interface_recovers_bad_declaration() {
+        let p = expect_recovered::<_, InterfaceParser>("g():int\nf( ) )", "eti");
+        assert!(p.error_count() >= 1);
+        assert_eq!(p.error_node_count(), 1);
+        let sexpr = p.output_sexpr().unwrap();
+        assert!(sexpr.contains("(g () (int))"), "valid decl survives: {sexpr}");
+        assert!(sexpr.contains("Error"), "bad decl recovers as an Error item: {sexpr}");
+    }
+
+    #[test]
+    fn interface_empty_still_hard_fails() {
+        // Recovery must NOT mask the "needs at least one declaration" rule.
+        let p = expect_failed::<_, InterfaceParser>("", "eti");
+        assert!(p
+            .messages()
+            .iter()
+            .any(|m| m.contains("at least one method declaration")));
+    }
 }
