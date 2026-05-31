@@ -13,5 +13,8 @@ etac_span.workspace    = true
 either.workspace       = true
 lalrpop-util.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [build-dependencies]
 lalrpop.workspace = true

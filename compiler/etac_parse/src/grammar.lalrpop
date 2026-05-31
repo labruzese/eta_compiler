@@ -103,11 +103,12 @@ extern {
 pub Program: Program = {
     <uses:UseList> <definitions:Definition+> => 
 	Program { uses, definitions },
-    <l:@L> ! <r:@R> =>? Err(error!(f, l..r; "Program must contain at least one definition").into())
+    <uses:UseList> <r:@R> =>? Err(error!(f, r..r; "Program must contain at least one definition").with_primary_label("expected definition").into())
 };
 
 pub Interface: Interface = {
     <method_decls:(Sp<MethodDecl>)+> => Interface { method_decls },
+    <r:@R> =>? Err(error!(f, r..r; "Interface must contain at least one method declaration").with_primary_label("expected declaration").into())
 };
 
 UseList: Vec<Spanned<Use>> = {
@@ -125,6 +126,7 @@ Use: Use = {
 Definition: Definition = {
     <m:Sp<Method>>    => Definition::Method(m),
     <gd:Sp<GlobDecl>> => Definition::GlobDecl(gd),
+    ! => { errors.push(<>); Definition::Error }
 };
 
 MethodDecl: MethodDecl = {
@@ -225,7 +227,11 @@ FuncBlock: Block = {
 // ---- Statements (General and Control Flow) ----
 
 // return *not* in this non-terminal
-Stmt: Stmt = { StmtOpen, StmtClosed }
+Stmt: Stmt = { 
+    StmtOpen,
+    StmtClosed,
+    ! => { errors.push(<>); Stmt::Error }
+}
 
 ReturnStmt: ReturnStmt = {
     "return" <values:Comma<Expr>> ";"? => ReturnStmt { values },
@@ -396,6 +402,8 @@ Expr: Expr = {
     #[precedence(level="7")] #[assoc(side="left")]
     <l:@L> <left:Expr> <op:Sp<OrOp>> <right:Expr> <r:@R>
         => Expr::Binary(sp!(f, l, ExprBinOp { op, left: Box::new(left), right: Box::new(right) }, r)),
+
+    ! => { errors.push(<>); Expr::Error }
 };
 
 // ---- Primary: atoms, postfix indexing, parens. ----

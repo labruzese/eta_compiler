@@ -114,7 +114,7 @@ where
                         .log_syntactic_error(&file_id, loc, &diag.message)
                         .map_err(|e| emit(cache, e.into()))?;
                 }
-                for d in diags {
+                for d in dbg!(diags) {
                     emit(cache, d)
                 }
                 eprintln!("couldn't build parse tree");

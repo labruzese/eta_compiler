@@ -21,6 +21,7 @@ logos           = "0.16"
 pretty          = "0.12"
 similar-asserts = "2"
 unicode-width   = "0.2"
+tempfile 	= "3.27.0"
 
 # internal
 etac_ast      = { path = "compiler/etac_ast" }

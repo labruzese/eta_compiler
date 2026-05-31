@@ -46,6 +46,7 @@ pub use grammar::InterfaceParser;
 impl_iparser!{ProgramParser, etac_ast::Program}
 impl_iparser!{InterfaceParser, etac_ast::Interface}
 
+#[derive(Debug)]
 pub struct ParseResult<Out> {
     pub output: Option<Out>,
     pub errors: Vec<Diagnostic>,

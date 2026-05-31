@@ -256,6 +256,7 @@ impl ToDoc for Expr {
             Expr::Length(e) => parens([d!("length"), d!(e.node)]),
             Expr::Unary(s) => parens([d!(@s.node.op), d!(s.node.expr)]),
             Expr::Binary(s) => parens([d!(@s.node.op), d!(s.node.left), d!(s.node.right)]),
+            Expr::Error => d!("Error"),
         }
     }
 }
