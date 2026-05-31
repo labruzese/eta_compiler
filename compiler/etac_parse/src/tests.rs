@@ -112,32 +112,115 @@ mod tests {
     // Definition-level recovery (! => Definition::Error)
     #[test]
     fn garbage_definition_recovers_as_error_node() {
-        todo!()
+        // The use-list is valid, but the only "definition" is junk tokens.
+        // The `! => Definition::Error` production should swallow them, satisfy
+        // `Definition+`, and let the parse produce an AST alongside a diagnostic.
+        let p = expect_recovered::<_, ProgramParser>("use io\n) ) )", "eta");
+        assert_eq!(p.error_count(), 1, "expected exactly one error diagnostic");
+        assert_eq!(
+            p.error_node_count(),
+            1,
+            "the garbage should collapse into a single Definition::Error node"
+        );
+
+        let sexpr = p.output_sexpr().unwrap();
+        // The valid use survived and the lone definition is the error node.
+        assert!(sexpr.contains("(use io)"), "use should be preserved: {sexpr}");
+        assert!(sexpr.contains("(Error)"), "definitions list should hold the error: {sexpr}");
+        assert!(
+            p.messages().iter().any(|m| m.contains("Unexpected token")),
+            "diagnostic should report the unexpected token: {:?}",
+            p.messages()
+        );
     }
     #[test]
     fn trailing_garbage_after_valid_method_recovers() {
-        todo!()
+        // A fully valid method followed by stray closing braces. Recovery should
+        // keep the method intact and only the trailing junk becomes an error node.
+        let p = expect_recovered::<_, ProgramParser>("size():int { return 0 }\n} } }", "eta");
+        assert!(p.error_count() >= 1);
+        assert_eq!(p.error_node_count(), 1, "only the trailing garbage should error");
+
+        let sexpr = p.output_sexpr().unwrap();
+        // The good method (header, return type, and body) is untouched...
+        assert!(
+            sexpr.contains("(size () (int) ((return 0)))"),
+            "valid method must be preserved verbatim: {sexpr}"
+        );
+        // ...and the recovery node sits *after* it as a sibling definition.
+        let method_pos = sexpr.find("(size").unwrap();
+        let error_pos = sexpr.find("Error").unwrap();
+        assert!(error_pos > method_pos, "error node should trail the method: {sexpr}");
     }
 
     // Statement-level recovery (! => Stmt::Error)
     #[test]
     fn bad_statement_becomes_error_stmt() {
-        todo!()
+        // `+ +` is not a valid statement (the `+` operators have no operands and
+        // `+` is not a unary op), so the statement-level `!` fires.
+        let p = expect_recovered::<_, ProgramParser>("main() { + + }", "eta");
+        assert!(p.error_count() >= 1);
+        assert_eq!(p.error_node_count(), 1);
+
+        let sexpr = p.output_sexpr().unwrap();
+        // The method header survives; the body is a single Error statement.
+        assert!(
+            sexpr.contains("(main () () (Error))"),
+            "bad statement should recover as Stmt::Error inside the body: {sexpr}"
+        );
+        assert!(p.first_error_pos().is_some(), "error should carry a source location");
     }
 
     // Expression-level recovery (! => Expr::Error)
     #[test]
     fn missing_rhs_expression_becomes_error_expr() {
-        todo!()
+        // Assignment with nothing on the right-hand side: the expression-level
+        // `!` fires for the missing value, but the target decl still parses.
+        let p = expect_recovered::<_, ProgramParser>("main() { x:int = }", "eta");
+        assert!(p.error_count() >= 1);
+        assert_eq!(p.error_node_count(), 1);
+
+        let sexpr = p.output_sexpr().unwrap();
+        // Target `(x int)` is preserved; the value collapses to Expr::Error.
+        assert!(
+            sexpr.contains("(= (x int) Error)"),
+            "missing RHS should recover as an Expr::Error value: {sexpr}"
+        );
     }
     #[test]
     fn dangling_binary_operator_recovers() {
-        todo!()
+        // A binary `+` with no right operand, nested inside an index expression.
+        // Recovery is localized to the missing operand: the surrounding index
+        // (`a[...]`) and its base survive while only the operand is Expr::Error.
+        let p = expect_recovered::<_, ProgramParser>("main() { x:int = a[3 + ] }", "eta");
+        assert!(p.error_count() >= 1);
+        assert_eq!(p.error_node_count(), 1);
+
+        let sexpr = p.output_sexpr().unwrap();
+        // The index structure and its array base `a` are intact around the error.
+        assert!(
+            sexpr.contains("([] a Error)"),
+            "dangling operator should recover with surrounding expr intact: {sexpr}"
+        );
     }
 
     // Lexical errors abort BEFORE grammar recovery
     #[test]
     fn unknown_character_is_a_hard_failure_not_recovery() {
-        todo!()
+        // `@` is not a lexable token. The lexer yields an Err, which surfaces as
+        // a ParseError::User and aborts the parse entirely -- the grammar's `!`
+        // recovery rules never get a chance to run, so there is no AST.
+        let p = expect_failed::<_, ProgramParser>("main() { x:int = @ }", "eta");
+        assert!(p.output_sexpr().is_none(), "a lexical error must not yield an AST");
+        assert_eq!(
+            p.error_node_count(),
+            0,
+            "no Error recovery nodes should exist on a hard lexical failure"
+        );
+        assert!(
+            p.messages().iter().any(|m| m.contains("unknown token")),
+            "failure should come from the lexer, not the grammar: {:?}",
+            p.messages()
+        );
     }
 }
