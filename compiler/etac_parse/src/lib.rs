@@ -3,18 +3,6 @@ use etac_lexer::{Token};
 use etac_span::Span;
 use lalrpop_util::{lalrpop_mod, ParseError};
 
-/// helper macro for grammar.lalrpop
-/// file_id will be in scope, this will wrap a node with a span
-#[macro_export]
-macro_rules! sp {
-    ($l:expr, $r:expr; $node:expr) => {
-        Spanned::new(etac_span::Span::new($l, $r), $node)
-    };
-    ($span:expr; $node:expr) => {
-        Spanned::new($span, $node)
-    };
-}
-
 lalrpop_mod!(grammar);
 
 mod tests;

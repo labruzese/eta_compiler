@@ -1,202 +1,234 @@
-use etac_span::EtaSpan;
+//! Abstract syntax tree.
+//!
+//! Span placement (Option B): every node is *either* a struct with its own
+//! `span: Span` field, *or* an enum of the form `Foo { span, kind: FooKind }`.
+//! So `node.span` is always available — including the `Error` recovery variants.
+//! Small payloads are inlined as struct-variants (`ExprKind::Binary { .. }`),
+//! so the only struct types left are genuine nodes. The two types that *only*
+//! ever appear inside a spanned `Expr` (`Lit`, `ArrLit`) are deliberately
+//! span-free and inherit their location from the enclosing `Expr`.
+
+use etac_span::Span;
 
 mod printer;
 
-#[derive(Debug, Clone)]
-/// Wraps an AST node with it's span, both file and location
-pub struct Spanned<T> {
-    pub span: EtaSpan,
-    pub node: T,
-}
-
-impl<T> Spanned<T> {
-    pub fn new(span: EtaSpan, node: T) -> Self {
-        Self { span, node }
-    }
-}
-
 pub type Id = String;
-pub type IntLit = i128;
-pub type BoolLit = bool;
-pub type CharLit = char;
+
+/// Uniform span access for any node that carries one.
+pub trait HasSpan {
+    fn span(&self) -> Span;
+}
+
+macro_rules! impl_has_span {
+    ($($t:ty),* $(,)?) => {
+        $(impl HasSpan for $t {
+            fn span(&self) -> Span { self.span }
+        })*
+    };
+}
+
+// ---- Identifiers ----
+
+#[derive(Debug, Clone)]
+pub struct Ident {
+    pub span: Span,
+    pub sym: Id,
+}
+
+// ---- Top level ----
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub uses: Vec<Spanned<Use>>,
-    pub definitions: Vec<Definition>, 
+    pub uses: Vec<Use>,
+    pub definitions: Vec<Definition>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Interface {
     pub items: Vec<InterfaceItem>,
 }
 
 #[derive(Debug, Clone)]
-pub enum InterfaceItem {
-    Decl(Spanned<MethodDecl>),
-    Error,
-}
-
-#[derive(Debug, Clone)]
 pub struct Use {
-    pub id: Spanned<Id>,
+    pub span: Span,
+    pub id: Ident,
 }
 
 #[derive(Debug, Clone)]
-pub enum Definition {
-    Method(Spanned<Method>),
-    GlobDecl(Spanned<GlobDecl>),
+pub struct Definition {
+    pub span: Span,
+    pub kind: DefinitionKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum DefinitionKind {
+    Method(Method),
+    GlobDecl(GlobDecl),
     Error,
 }
+
+#[derive(Debug, Clone)]
+pub struct InterfaceItem {
+    pub span: Span,
+    pub kind: InterfaceItemKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum InterfaceItemKind {
+    Decl(MethodDecl),
+    Error,
+}
+
+// ---- Methods & globals ----
 
 #[derive(Debug, Clone)]
 pub struct MethodDecl {
-    pub id: Spanned<Id>,
-    pub params: Vec<Spanned<Decl>>,
+    pub span: Span,
+    pub id: Ident,
+    pub params: Vec<Decl>,
     pub ret_types: Vec<Type>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Method {
-    pub id: Spanned<Id>,
-    pub params: Vec<Spanned<Decl>>,
+    pub span: Span,
+    pub id: Ident,
+    pub params: Vec<Decl>,
     pub ret_types: Vec<Type>,
-    pub body: Spanned<Block>,
+    pub body: Block,
 }
 
 #[derive(Debug, Clone)]
 pub struct GlobDecl {
-    pub id: Spanned<Id>,
+    pub span: Span,
+    pub id: Ident,
     pub typ: Type,
     pub val: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Value {
-    IntLit(Spanned<IntLit>),
-    BoolLit(Spanned<BoolLit>),
+pub struct Value {
+    pub span: Span,
+    pub kind: ValueKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum ValueKind {
+    Int(i128),
+    Bool(bool),
 }
 
 #[derive(Debug, Clone)]
 pub struct Decl {
-    pub id: Spanned<Id>,
+    pub span: Span,
+    pub id: Ident,
     pub typ: Type,
 }
 
+// ---- Types ----
+
 #[derive(Debug, Clone)]
-pub enum Type {
-    SizedArray(Spanned<SizedArray>),
-    UnsizedArray(Spanned<UnsizedArray>),
-    Int(EtaSpan),
-    Bool(EtaSpan),
+pub struct Type {
+    pub span: Span,
+    pub kind: TypeKind,
 }
 
 #[derive(Debug, Clone)]
-pub struct SizedArray {
-    pub of: Box<Type>,
-    pub size: Expr,
+pub enum TypeKind {
+    SizedArray { of: Box<Type>, size: Box<Expr> },
+    UnsizedArray { of: Box<Type> },
+    Int,
+    Bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct UnsizedArray {
-    pub of: Box<Type>,
-}
+// ---- Blocks & statements ----
 
 #[derive(Debug, Clone)]
 pub struct Block {
+    pub span: Span,
     pub stmts: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Stmt {
-    Assignment(Spanned<Assignment>),
-    IfStmt(Spanned<IfStmt>),
-    WhileStmt(Spanned<WhileStmt>),
-    ReturnStmt(Spanned<ReturnStmt>),
-    ProcCall(Spanned<ProcCall>),
-    Block(Spanned<Block>),
-    Decls(Vec<Spanned<Decl>>),
+pub struct Stmt {
+    pub span: Span,
+    pub kind: StmtKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum StmtKind {
+    Assign { targets: Vec<Target>, values: Vec<Expr> },
+    If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
+    While { cond: Expr, body: Box<Stmt> },
+    Return { values: Vec<Expr> },
+    Call(ProcCall),
+    Block(Block),
+    Decls(Vec<Decl>),
     Error,
 }
 
+// ---- Targets & lvalues ----
+
 #[derive(Debug, Clone)]
-pub struct Assignment {
-    pub targets: Vec<Target>,
-    pub values: Vec<Expr>,
+pub struct Target {
+    pub span: Span,
+    pub kind: TargetKind,
 }
 
 #[derive(Debug, Clone)]
-pub enum Target {
+pub enum TargetKind {
     LValue(LValue),
-    Decl(Spanned<Decl>),
-    Discard(EtaSpan),
+    Decl(Decl),
+    Discard,
+}
+
+impl Target {
+    /// Wrap a declaration as an assignment target, inheriting its span.
+    pub fn from_decl(d: Decl) -> Target {
+        Target { span: d.span, kind: TargetKind::Decl(d) }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub enum LValue {
-    Index(Spanned<LValueIndex>),
-    Id(Spanned<Id>),
-    ProcCall(Spanned<ProcCall>),
+pub struct LValue {
+    pub span: Span,
+    pub kind: LValueKind,
 }
 
 #[derive(Debug, Clone)]
-pub struct LValueIndex {
-    pub of: Box<LValue>,
-    pub index: Expr,
+pub enum LValueKind {
+    Index { of: Box<LValue>, index: Box<Expr> },
+    Id(Ident),
+    ProcCall(ProcCall),
 }
 
-#[derive(Debug, Clone)]
-pub struct IfStmt {
-    pub cond: Expr,
-    pub then_branch: Box<Stmt>,
-    pub else_branch: Option<Box<Stmt>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WhileStmt {
-    pub cond: Expr,
-    pub body: Box<Stmt>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReturnStmt {
-    pub values: Vec<Expr>, 
-}
+// ---- Calls ----
 
 #[derive(Debug, Clone)]
 pub struct ProcCall {
-    pub id: Spanned<Id>,
+    pub span: Span,
+    pub id: Ident,
     pub args: Vec<Expr>,
 }
 
+// ---- Expressions ----
+
 #[derive(Debug, Clone)]
-pub enum Expr {
-    Id(Spanned<Id>),
+pub struct Expr {
+    pub span: Span,
+    pub kind: ExprKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprKind {
+    Id(Ident),
     Lit(Lit),
-    Index(Spanned<ExprIndex>),
-    Call(Spanned<ProcCall>),
-    Length(Spanned<Box<Expr>>), //this expr includes extra tokens
-    Unary(Spanned<ExprUOp>),
-    Binary(Spanned<ExprBinOp>),
+    Index { array: Box<Expr>, index: Box<Expr> },
+    Call(ProcCall),
+    Length(Box<Expr>),
+    Unary { op: UOp, op_span: Span, operand: Box<Expr> },
+    Binary { op: BinOp, op_span: Span, lhs: Box<Expr>, rhs: Box<Expr> },
     Error,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExprIndex {
-    pub array: Box<Expr>,
-    pub index: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExprUOp {
-    pub op: Spanned<UOp>,
-    pub expr: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExprBinOp {
-    pub op: Spanned<BinOp>,
-    pub left: Box<Expr>,
-    pub right: Box<Expr>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -204,6 +236,7 @@ pub enum UOp {
     Neg,
     Not,
 }
+
 #[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
@@ -222,16 +255,23 @@ pub enum BinOp {
     Or,
 }
 
+// ---- Literals (span-free; inherit from the enclosing Expr) ----
+
 #[derive(Debug, Clone)]
 pub enum Lit {
-    IntLit(Spanned<IntLit>),
-    BoolLit(Spanned<BoolLit>),
-    CharLit(Spanned<CharLit>),
-    ArrLit(ArrLit),
+    Int(i128),
+    Bool(bool),
+    Char(char),
+    Arr(ArrLit),
 }
 
 #[derive(Debug, Clone)]
 pub enum ArrLit {
-    StringLit(Spanned<String>),
+    Str(String),
     Array(Vec<Expr>),
 }
+
+impl_has_span!(
+    Ident, Use, Definition, InterfaceItem, MethodDecl, Method, GlobDecl, Value,
+    Decl, Type, Block, Stmt, Target, LValue, ProcCall, Expr,
+);

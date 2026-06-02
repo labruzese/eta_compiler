@@ -1,6 +1,6 @@
 use super::*;
 use pretty::{Doc, RcDoc};
-use std::fmt::{self, Display};
+use std::fmt;
 
 const WIDTH: usize = 80;
 const INDENT: isize = 1;
@@ -42,19 +42,13 @@ macro_rules! impl_display {
 }
 
 impl_display!(
-    Program, Interface, InterfaceItem, Use, Definition, MethodDecl, Method, GlobDecl, Value, Decl, Type, Block, Stmt, Assignment,
-    Target, LValue, IfStmt, WhileStmt, ReturnStmt, ProcCall, Expr, Lit, ArrLit,
+    Program, Interface, InterfaceItem, Use, Definition, MethodDecl, Method, GlobDecl, Value, Decl, Type, Block, Stmt,
+    Target, LValue, ProcCall, Expr, Lit, ArrLit,
 );
 
-impl<T: Display> Display for Spanned<T> {
+impl fmt::Display for Ident {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.node, f)
-    }
-}
-
-impl<T: ToDoc> ToDoc for Spanned<T> {
-    fn to_doc(&self) -> RcDoc<'static, ()> {
-        d!(self.node)
+        f.write_str(&self.sym)
     }
 }
 
@@ -73,43 +67,38 @@ impl ToDoc for Program {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         parens([
             parens(docs!(self.uses)),
-            parens(docs!(self.definitions))
+            parens(docs!(self.definitions)),
         ])
     }
 }
 
 impl ToDoc for Interface {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        parens([
-            parens(docs!(self.items))
-        ])
+        parens([parens(docs!(self.items))])
     }
 }
 
 impl ToDoc for InterfaceItem {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            InterfaceItem::Decl(d) => d!(d),
-            InterfaceItem::Error => d!("Error"),
+        match &self.kind {
+            InterfaceItemKind::Decl(d) => d.to_doc(),
+            InterfaceItemKind::Error => d!("Error"),
         }
     }
 }
 
 impl ToDoc for Use {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        parens([
-            d!("use"),
-            d!(@self.id)
-        ])
+        parens([d!("use"), d!(@self.id)])
     }
 }
 
 impl ToDoc for Definition {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            Definition::Method(m) => d!(m),
-            Definition::GlobDecl(g) => d!(g),
-            Definition::Error => d!("Error"),
+        match &self.kind {
+            DefinitionKind::Method(m) => m.to_doc(),
+            DefinitionKind::GlobDecl(g) => g.to_doc(),
+            DefinitionKind::Error => d!("Error"),
         }
     }
 }
@@ -126,7 +115,7 @@ impl ToDoc for Method {
             d!(@self.id),
             parens(docs!(self.params)),
             parens(docs!(self.ret_types)),
-            d!(self.body),
+            self.body.to_doc(),
         ])
     }
 }
@@ -135,7 +124,7 @@ impl ToDoc for GlobDecl {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         let mut items = vec![d!(":global"), d!(@self.id), d!(self.typ)];
         if let Some(v) = &self.val {
-            items.push(d!(v));
+            items.push(v.to_doc());
         }
         parens(items)
     }
@@ -143,9 +132,9 @@ impl ToDoc for GlobDecl {
 
 impl ToDoc for Value {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            Value::IntLit(i) => d!(@i),
-            Value::BoolLit(b) => d!(@b),
+        match &self.kind {
+            ValueKind::Int(i) => atom(i),
+            ValueKind::Bool(b) => atom(b),
         }
     }
 }
@@ -158,11 +147,11 @@ impl ToDoc for Decl {
 
 impl ToDoc for Type {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            Type::SizedArray(s) => parens([d!("[]"), d!(s.node.of), d!(s.node.size)]),
-            Type::UnsizedArray(u) => parens([d!("[]"), d!(u.node.of)]),
-            Type::Int(_) => d!("int"),
-            Type::Bool(_) => d!("bool"),
+        match &self.kind {
+            TypeKind::SizedArray { of, size } => parens([d!("[]"), of.to_doc(), size.to_doc()]),
+            TypeKind::UnsizedArray { of } => parens([d!("[]"), of.to_doc()]),
+            TypeKind::Int => d!("int"),
+            TypeKind::Bool => d!("bool"),
         }
     }
 }
@@ -175,75 +164,55 @@ impl ToDoc for Block {
 
 impl ToDoc for Stmt {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            Stmt::Assignment(a) => d!(a),
-            Stmt::IfStmt(i) => d!(i),
-            Stmt::WhileStmt(w) => d!(w),
-            Stmt::ReturnStmt(r) => d!(r),
-            Stmt::ProcCall(p) => d!(p),
-            Stmt::Block(b) => d!(b),
-            Stmt::Decls(decls) => RcDoc::intersperse(docs!(decls), Doc::line()).group(),
-            Stmt::Error => d!("Error"),
+        match &self.kind {
+            StmtKind::Assign { targets, values } => {
+                let t = if targets.len() == 1 {
+                    targets[0].to_doc()
+                } else {
+                    parens(docs!(targets))
+                };
+                let v = if values.len() == 1 {
+                    values[0].to_doc()
+                } else {
+                    parens(docs!(values))
+                };
+                parens([d!("="), t, v])
+            }
+            StmtKind::If { cond, then_branch, else_branch } => match else_branch {
+                Some(e) => parens([d!("if"), cond.to_doc(), then_branch.to_doc(), e.to_doc()]),
+                None => parens([d!("if"), cond.to_doc(), then_branch.to_doc()]),
+            },
+            StmtKind::While { cond, body } => parens([d!("while"), cond.to_doc(), body.to_doc()]),
+            StmtKind::Return { values } => {
+                let mut items = vec![d!("return")];
+                items.extend(docs!(values));
+                parens(items)
+            }
+            StmtKind::Call(p) => p.to_doc(),
+            StmtKind::Block(b) => b.to_doc(),
+            StmtKind::Decls(decls) => RcDoc::intersperse(docs!(decls), Doc::line()).group(),
+            StmtKind::Error => d!("Error"),
         }
-    }
-}
-
-impl ToDoc for Assignment {
-    fn to_doc(&self) -> RcDoc<'static, ()> {
-        let t = if self.targets.len() == 1 {
-            d!(self.targets[0])
-        } else {
-            parens(docs!(self.targets))
-        };
-        let v = if self.values.len() == 1 {
-            d!(self.values[0])
-        } else {
-            parens(docs!(self.values))
-        };
-        parens([d!("="), t, v])
     }
 }
 
 impl ToDoc for Target {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            Target::LValue(v) => d!(v),
-            Target::Decl(d_) => d_.to_doc(),
-            Target::Discard(_) => d!("_"),
+        match &self.kind {
+            TargetKind::LValue(v) => v.to_doc(),
+            TargetKind::Decl(d_) => d_.to_doc(),
+            TargetKind::Discard => d!("_"),
         }
     }
 }
 
 impl ToDoc for LValue {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            LValue::Index(s) => parens([d!("[]"), d!(s.node.of), d!(s.node.index)]),
-            LValue::Id(id) => d!(@ id),
-            LValue::ProcCall(pc) => d!(pc),
+        match &self.kind {
+            LValueKind::Index { of, index } => parens([d!("[]"), of.to_doc(), index.to_doc()]),
+            LValueKind::Id(id) => d!(@id),
+            LValueKind::ProcCall(pc) => pc.to_doc(),
         }
-    }
-}
-
-impl ToDoc for IfStmt {
-    fn to_doc(&self) -> RcDoc<'static, ()> {
-        match &self.else_branch {
-            Some(e) => parens([d!("if"), d!(self.cond), d!(self.then_branch), d!(e)]),
-            None => parens([d!("if"), d!(self.cond), d!(self.then_branch)]),
-        }
-    }
-}
-
-impl ToDoc for WhileStmt {
-    fn to_doc(&self) -> RcDoc<'static, ()> {
-        parens([d!("while"), d!(self.cond), d!(self.body)])
-    }
-}
-
-impl ToDoc for ReturnStmt {
-    fn to_doc(&self) -> RcDoc<'static, ()> {
-        let mut items = vec![d!("return")];
-        items.extend(docs!(self.values));
-        parens(items)
     }
 }
 
@@ -257,15 +226,15 @@ impl ToDoc for ProcCall {
 
 impl ToDoc for Expr {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match self {
-            Expr::Id(id) => d!(@id),
-            Expr::Lit(lit) => d!(lit),
-            Expr::Index(s) => parens([d!("[]"), d!(s.node.array), d!(s.node.index)]),
-            Expr::Call(pc) => d!(pc),
-            Expr::Length(e) => parens([d!("length"), d!(e.node)]),
-            Expr::Unary(s) => parens([d!(@s.node.op), d!(s.node.expr)]),
-            Expr::Binary(s) => parens([d!(@s.node.op), d!(s.node.left), d!(s.node.right)]),
-            Expr::Error => d!("Error"),
+        match &self.kind {
+            ExprKind::Id(id) => d!(@id),
+            ExprKind::Lit(lit) => lit.to_doc(),
+            ExprKind::Index { array, index } => parens([d!("[]"), array.to_doc(), index.to_doc()]),
+            ExprKind::Call(pc) => pc.to_doc(),
+            ExprKind::Length(e) => parens([d!("length"), e.to_doc()]),
+            ExprKind::Unary { op, operand, .. } => parens([d!(@op), operand.to_doc()]),
+            ExprKind::Binary { op, lhs, rhs, .. } => parens([d!(@op), lhs.to_doc(), rhs.to_doc()]),
+            ExprKind::Error => d!("Error"),
         }
     }
 }
@@ -273,10 +242,10 @@ impl ToDoc for Expr {
 impl ToDoc for Lit {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
-            Lit::IntLit(i) => d!(@i),
-            Lit::BoolLit(b) => d!(@b),
-            Lit::CharLit(c) => atom(format!("\'{c}\'")),
-            Lit::ArrLit(a) => d!(a),
+            Lit::Int(i) => atom(i),
+            Lit::Bool(b) => atom(b),
+            Lit::Char(c) => atom(format!("'{c}'")),
+            Lit::Arr(a) => a.to_doc(),
         }
     }
 }
@@ -284,7 +253,7 @@ impl ToDoc for Lit {
 impl ToDoc for ArrLit {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match self {
-            ArrLit::StringLit(s) => RcDoc::text(format!("\"{}\"", s.node.escape_default())),
+            ArrLit::Str(s) => RcDoc::text(format!("\"{}\"", s.escape_default())),
             ArrLit::Array(exprs) => parens(docs!(exprs)),
         }
     }
@@ -319,4 +288,3 @@ impl fmt::Display for BinOp {
         })
     }
 }
-

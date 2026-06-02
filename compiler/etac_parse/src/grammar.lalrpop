@@ -11,10 +11,6 @@ grammar(
 
 // ---- macros ----
 
-/// Wrap any rule in a `Spanned`. Captures `@L`..`@R` around the inner rule.
-Sp<T>: Spanned<T> = 
-    <l:@L> <n:T> <r:@R> => sp!(l, r; n);
-
 // One or more T separated by `,`, NO trailing comma.
 CommaPlus<T>: Vec<T> = {
     <e:T>				=> vec![e],
@@ -94,45 +90,69 @@ extern {
     }
 }
 
+// ---- Identifiers ----
+
+Ident: Ident = <l:@L> <s:"ident"> <r:@R> => Ident { span: Span::new(l, r), sym: s };
+
 // ---- Top Level ----
 
 pub Program: Program = {
-    <uses:UseList> <definitions:Definition+> => 
-	Program { uses, definitions },
-    <uses:UseList> <r:@R> =>? Err(error!(Span::new(r, r); "Program must contain at least one definition").with_primary_label("expected definition").into())
+    <uses:UseList> <definitions:Definition+> => Program { uses, definitions },
+    <uses:UseList> <r:@R> =>? Err(
+	error!(Span::new(r, r); "Program must contain at least one definition")
+	    .with_primary_label("expected definition")
+	    .into()
+    )
 }
 
 pub Interface: Interface = {
     <items:InterfaceItem+> => Interface { items },
-    <r:@R> =>? Err(error!(Span::new(r, r); "Interface must contain at least one method declaration").with_primary_label("expected declaration").into())
+    <r:@R> =>? Err(
+	error!(Span::new(r, r); "Interface must contain at least one method declaration")
+	    .with_primary_label("expected declaration")
+	    .into()
+    )
 }
 
 InterfaceItem: InterfaceItem = {
-    <m:Sp<MethodDecl>> => InterfaceItem::Decl(m),
-    ! => { errors.push(<>); InterfaceItem::Error }
+    <md:MethodDecl> => InterfaceItem { 
+	span: md.span,
+	kind: InterfaceItemKind::Decl(md) 
+    },
+    <l:@L> <e:!> <r:@R> => { 
+	errors.push(e); 
+	InterfaceItem { 
+	    span: Span::new(l, r),
+	    kind: InterfaceItemKind::Error
+	} 
+    }
 }
 
-UseList: Vec<Spanned<Use>> = {
-    <mut h:UseList> <t:Sp<Use>> => {
-        h.push(t); 
+UseList: Vec<Use> = {
+    <mut h:UseList> <t:Use> => {
+        h.push(t);
 	h
     },
     => vec![],
 }
 
 Use: Use = {
-    "use" <id:Sp<"ident">> ";"? => Use { id },
+    <l:@L> "use" <id:Ident> ";"? <r:@R> => Use { span: Span::new(l, r), id },
 }
 
 Definition: Definition = {
-    <m:Sp<Method>>    => Definition::Method(m),
-    <gd:Sp<GlobDecl>> => Definition::GlobDecl(gd),
-    ! => { errors.push(<>); Definition::Error }
+    <m:Method>    => Definition { span: m.span, kind: DefinitionKind::Method(m) },
+    <gd:GlobDecl> => Definition { span: gd.span, kind: DefinitionKind::GlobDecl(gd) },
+    <l:@L> <e:!> <r:@R> => { 
+	errors.push(e); 
+	Definition { span: Span::new(l, r), kind: DefinitionKind::Error } 
+    }
 }
 
 MethodDecl: MethodDecl = {
-    <id:Sp<"ident">> "(" <params:Comma<Sp<Decl>>> ")" <ret:(":" <CommaPlus<Type>>)?> =>
+    <l:@L> <id:Ident> "(" <params:Comma<Decl>> ")" <ret:(":" <CommaPlus<Type>>)?> <r:@R> =>
         MethodDecl {
+            span: Span::new(l, r),
             id,
             params,
             ret_types: ret.unwrap_or_default(),
@@ -140,29 +160,30 @@ MethodDecl: MethodDecl = {
 }
 
 Method: Method = {
-    <decl:Sp<MethodDecl>> <body:Sp<FuncBlock>> => {
-	let MethodDecl { id, params, ret_types } = decl.node;
-	Method { id, params, ret_types, body }
+    <l:@L> <decl:MethodDecl> <body:FuncBlock> <r:@R> => {
+	let MethodDecl { span: _, id, params, ret_types } = decl;
+	Method { span: Span::new(l, r), id, params, ret_types, body }
     },
     // Recover a broken body while preserving the (already-valid) signature, so
     // downstream passes can still resolve calls to this method.
-    <decl:Sp<MethodDecl>> <l:@L> <e:!> <r:@R> => {
+    <l:@L> <decl:MethodDecl> <bl:@L> <e:!> <r:@R> => {
 	errors.push(e);
-	let MethodDecl { id, params, ret_types } = decl.node;
-	let body = sp!(l, r; Block { stmts: vec![Stmt::Error] });
-	Method { id, params, ret_types, body }
+	let MethodDecl { span: _, id, params, ret_types } = decl;
+	let bspan = Span::new(bl, r);
+	let body = Block { span: bspan, stmts: vec![Stmt { span: bspan, kind: StmtKind::Error }] };
+	Method { span: Span::new(l, r), id, params, ret_types, body }
     },
 }
 
 GlobDecl: GlobDecl = {
-    <id:Sp<"ident">> ":" <typ:GlobDeclType> <val:("=" <GlobalValue>)?> ";"? => 
-	GlobDecl { id, typ, val },
+    <l:@L> <id:Ident> ":" <typ:GlobDeclType> <val:("=" <GlobalValue>)?> ";"? <r:@R> =>
+	GlobDecl { span: Span::new(l, r), id, typ, val },
 }
 
 GlobalValue: Value = {
-    <l:@L> "-" <n:"intlit"> <r:@R> 	=> Value::IntLit(sp!(l, r; -(n as i128))),
-    <l:@L> <n:"intlit"> <r:@R>    	=> Value::IntLit(sp!(l, r; n as i128)),
-    <l:@L> <b:"boollit"> <r:@R>		=> Value::BoolLit(sp!(l, r; b)),
+    <l:@L> "-" <n:"intlit"> <r:@R> 	=> Value { span: Span::new(l, r), kind: ValueKind::Int(-(n as i128)) },
+    <l:@L> <n:"intlit"> <r:@R>    	=> Value { span: Span::new(l, r), kind: ValueKind::Int(n as i128) },
+    <l:@L> <b:"boollit"> <r:@R>		=> Value { span: Span::new(l, r), kind: ValueKind::Bool(b) },
 }
 
 
@@ -188,9 +209,14 @@ TypeUnsized: Type = {
             .collect();
         all.into_iter().rev().fold(base, |inner, dim| match dim {
             Either::Left((l, size, r)) =>
-                Type::SizedArray(sp!(l, r; SizedArray { of: Box::new(inner), size })),
+                Type { span: Span::new(l, r), kind: TypeKind::SizedArray { 
+		    of: Box::new(inner),
+		    size: Box::new(size) 
+		} },
             Either::Right((l, r)) =>
-                Type::UnsizedArray(sp!(l, r; UnsizedArray { of: Box::new(inner) })),
+                Type { span: Span::new(l, r), kind: TypeKind::UnsizedArray { 
+		    of: Box::new(inner) 
+		} },
         })
     }
 }
@@ -199,7 +225,10 @@ TypeSized: Type = {
     <BaseType>,
     <base:BaseType> <dims:SizedDim+> => {
         dims.into_iter().rev().fold(base, |inner, (l, size, r)| {
-            Type::SizedArray(sp!(l, r; SizedArray { of: Box::new(inner), size }))
+            Type { span: Span::new(l, r), kind: TypeKind::SizedArray { 
+		of: Box::new(inner),
+		size: Box::new(size) 
+	    } }
         })
     }
 }
@@ -207,28 +236,28 @@ TypeSized: Type = {
 GlobDeclType: Type = {
     <BaseType>,
     <TypeUnsized>,
-    <base:BaseType> "[" <l:@L> <size:Expr> <r:@R> "]" =>? 
+    <base:BaseType> "[" <l:@L> <size:Expr> <r:@R> "]" =>?
         Err(error!(Span::new(l, r); "Global arrays can't be initialized at the point of declaration")
 	    .with_primary_label("initialization happens here")
 	)?
 }
 
 BaseType: Type = {
-    <l:@L> <s:"int"> <r:@R> 	=> Type::Int(Span::new(l, r)),
-    <l:@L> <s:"bool"> <r:@R>	=> Type::Bool(Span::new(l, r)),
+    <l:@L> "int" <r:@R> 	=> Type { span: Span::new(l, r), kind: TypeKind::Int },
+    <l:@L> "bool" <r:@R>	=> Type { span: Span::new(l, r), kind: TypeKind::Bool },
 }
 
 // ----- Blocks -----
 
 Block: Block = {
-    "{" <stmts:(<Stmt> ";"?)*> "}" => Block { stmts },
+    <l:@L> "{" <stmts:(<Stmt> ";"?)*> "}" <r:@R> => Block { span: Span::new(l, r), stmts },
 }
 
 // can end with return
 FuncBlock: Block = {
-    "{" <mut stmts:(<Stmt> ";"?)*> <r:Sp<ReturnStmt>?> "}" => {
-	if let Some(r) = r { stmts.extend(vec![Stmt::ReturnStmt(r)]); }
-	Block { stmts }
+    <l:@L> "{" <mut stmts:(<Stmt> ";"?)*> <ret:ReturnStmtNode?> "}" <r:@R> => {
+	if let Some(ret) = ret { stmts.push(ret); }
+	Block { span: Span::new(l, r), stmts }
     },
 }
 
@@ -236,117 +265,145 @@ FuncBlock: Block = {
 // ---- Statements (General and Control Flow) ----
 
 // return *not* in this non-terminal
-Stmt: Stmt = { 
+Stmt: Stmt = {
     StmtOpen,
     StmtClosed,
-    ! => { errors.push(<>); Stmt::Error }
+    <l:@L> <e:!> <r:@R> => { 
+	errors.push(e);
+	Stmt { span: Span::new(l, r), kind: StmtKind::Error } 
+    }
 }
 
-ReturnStmt: ReturnStmt = {
-    "return" <values:Comma<Expr>> ";"? => ReturnStmt { values },
+ReturnStmtNode: Stmt = {
+    <l:@L> "return" <values:Comma<Expr>> ";"? <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::Return { values } },
 }
 
 // elses can be matched
 StmtOpen: Stmt = {
-    <s:Sp<IfStmtOpen>>    => Stmt::IfStmt(s),
-    <s:Sp<WhileStmtOpen>> => Stmt::WhileStmt(s),
+    IfStmtOpen,
+    WhileStmtOpen,
 }
 
-IfStmtOpen: IfStmt = {
-    "if" <cond:Expr> <t:Stmt> => 
-	IfStmt { cond, then_branch: Box::new(t), else_branch: None },
-    "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtOpen> => 
-	IfStmt { cond, then_branch: Box::new(t), else_branch: Some(Box::new(e)) },
+IfStmtOpen: Stmt = {
+    <l:@L> "if" <cond:Expr> <t:Stmt> <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::If { 
+	    cond,
+	    then_branch: Box::new(t),
+	    else_branch: None 
+	} },
+    <l:@L> "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtOpen> <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::If { 
+	    cond,
+	    then_branch: Box::new(t),
+	    else_branch: Some(Box::new(e))  
+	} },
 }
-WhileStmtOpen: WhileStmt = {
-    "while" <cond:Expr> <body:StmtOpen> => 
-	WhileStmt { cond, body: Box::new(body) }
+WhileStmtOpen: Stmt = {
+    <l:@L> "while" <cond:Expr> <body:StmtOpen> <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::While { 
+	    cond,
+	    body: Box::new(body)
+	} },
 }
 
 // nothing for else to match
 StmtClosed: Stmt = {
-    <ifstmt:Sp<IfStmtClosed>> 	 => Stmt::IfStmt(ifstmt),
-    <wlstmt:Sp<WhileStmtClosed>> => Stmt::WhileStmt(wlstmt),
-    <stmts:Sp<Block>>  		 => Stmt::Block(stmts),
-    <pcall:Sp<ProcCall>>	 => Stmt::ProcCall(pcall),
-    <decls:DeclTargets>		 => Stmt::Decls(decls),
-    <l:@L> <ts:DeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> => 
-	Stmt::Assignment(sp!(l, r;
-	    Assignment { 
-		targets: ts.into_iter().map(|d| Target::Decl(d)).collect(), 
-		values 
-	    })),
-    <l:@L> <ts:NonDeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> => 
-	Stmt::Assignment(sp!(l, r; Assignment { targets: ts, values })),
+    IfStmtClosed,
+    WhileStmtClosed,
+    <l:@L> <b:Block> <r:@R>          	=> Stmt { span: Span::new(l, r), kind: StmtKind::Block(b) },
+    <l:@L> <pcall:ProcCall> <r:@R>   	=> Stmt { span: Span::new(l, r), kind: StmtKind::Call(pcall) },
+    <l:@L> <decls:DeclTargets> <r:@R> 	=> Stmt { span: Span::new(l, r), kind: StmtKind::Decls(decls) },
+    <l:@L> <ts:DeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::Assign {
+	    targets: ts.into_iter().map(Target::from_decl).collect(),
+	    values,
+	} },
+    <l:@L> <ts:NonDeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::Assign { 
+	    targets: ts,
+	    values 
+	} },
 }
 
-IfStmtClosed: IfStmt = {
-    "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtClosed> => 
-	IfStmt { cond, then_branch: Box::new(t), else_branch: Some(Box::new(e)) }
+IfStmtClosed: Stmt = {
+    <l:@L> "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtClosed> <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::If { 
+	    cond,
+	    then_branch: Box::new(t),
+	    else_branch: Some(Box::new(e)) 
+	} },
 }
-WhileStmtClosed: WhileStmt = {
-    "while" <cond:Expr> <body:StmtClosed> => 
-	WhileStmt { cond, body: Box::new(body) }
+WhileStmtClosed: Stmt = {
+    <l:@L> "while" <cond:Expr> <body:StmtClosed> <r:@R> =>
+	Stmt { span: Span::new(l, r), kind: StmtKind::While { 
+	    cond,
+	    body: Box::new(body) 
+	} },
 }
 
 // ---- Non-Control Flow Statements ----
 
 Decl: Decl = {
-    <id:Sp<"ident">> ":" <typ:Type> => Decl { id, typ },
+    <l:@L> <id:Ident> ":" <typ:Type> <r:@R> => Decl { span: Span::new(l, r), id, typ },
 }
 
 // pure decl target also valid as multi-decl
-DeclTargets: Vec<Spanned<Decl>> = {
-    <d:Sp<Decl>> => vec![d],
-    <mut p:DeclTargets> "," <n:Sp<Decl>> => {
-	p.extend(vec![n]);
+DeclTargets: Vec<Decl> = {
+    <d:Decl> => vec![d],
+    <mut p:DeclTargets> "," <n:Decl> => {
+	p.push(n);
 	p
     }
 }
 
-// contains r0 non-decl target (not valid multi-decl)
+// contains >0 non-decl target (not valid multi-decl)
 NonDeclTargets: Vec<Target> = {
     <t:NonDeclTarget> => vec![t],
     <p:DeclTargets> "," <n:NonDeclTarget> =>
-	p.into_iter().map(|d| Target::Decl(d)).chain(std::iter::once(n)).collect(),
+	p.into_iter().map(Target::from_decl).chain(std::iter::once(n)).collect(),
     <mut p:NonDeclTargets> "," <n:NonDeclTarget> => {
-	p.extend(vec![n]);
+	p.push(n);
 	p
     },
-    <mut p:NonDeclTargets> "," <n:Sp<Decl>> => {
-	p.extend(vec![Target::Decl(n)]);
+    <mut p:NonDeclTargets> "," <n:Decl> => {
+	p.push(Target::from_decl(n));
 	p
     }
 }
 
 NonDeclTarget: Target = {
-    <l:LValue> 	 => Target::LValue(l),
-    <s:Sp<"_">>  => Target::Discard(s.span),
+    <lv:LValue> 	 => Target { span: lv.span, kind: TargetKind::LValue(lv) },
+    <l:@L> "_" <r:@R>	 => Target { span: Span::new(l, r), kind: TargetKind::Discard },
 }
 
 LValue: LValue = {
-    <base:LValueBase> <indices:Sp<ArrayIndex>*> => {
-        indices.into_iter().fold(base, |lv, ai| {
-            LValue::Index(sp!(ai.span; LValueIndex { of: Box::new(lv), index: ai.node }))
+    <base:LValueBase> <indices:ArrayIndex*> => {
+        indices.into_iter().fold(base, |lv, (idx, ispan)| {
+            let span = lv.span.to(ispan);
+            LValue { span, kind: LValueKind::Index { of: Box::new(lv), index: Box::new(idx) } }
         })
     },
 }
 LValueBase: LValue = {
-    <id:Sp<"ident">> => LValue::Id(id),
-    <pc:Sp<ProcCall>> => LValue::ProcCall(pc),
+    <id:Ident>        => LValue { span: id.span, kind: LValueKind::Id(id) },
+    <pc:ProcCall>     => LValue { span: pc.span, kind: LValueKind::ProcCall(pc) },
 }
 
 ProcCall: ProcCall = {
-    <id:Sp<"ident">> "(" <args:Comma<Expr>> ")" => ProcCall { id, args },
+    <l:@L> <id:Ident> "(" <args:Comma<Expr>> ")" <r:@R> => ProcCall { span: Span::new(l, r), id, args },
 }
 
-#[inline] ArrayIndex: Expr = { "[" <Expr> "]" }
+// index expression plus the span of the `[..]` bracket group
+#[inline] ArrayIndex: (Expr, Span) = {
+    <l:@L> "[" <e:Expr> "]" <r:@R> => (e, Span::new(l, r))
+}
 
 // ---- Expressions ----
 
-#[inline] UnaryOp: UOp = { 
+#[inline] UnaryOp: UOp = {
     "-" => UOp::Neg,
-    "!" => UOp::Not 
+    "!" => UOp::Not
 }
 
 #[inline] MulOp: BinOp = {
@@ -356,7 +413,7 @@ ProcCall: ProcCall = {
     "%"   => BinOp::Mod,
 }
 
-#[inline] AddOp: BinOp = { 
+#[inline] AddOp: BinOp = {
     "+" => BinOp::Add,
     "-" => BinOp::Sub
 }
@@ -366,9 +423,9 @@ ProcCall: ProcCall = {
     ">"  => BinOp::Gt, ">=" => BinOp::Ge,
 }
 
-#[inline] EqOp: BinOp = { 
-    "==" => BinOp::Eq, 
-    "!=" => BinOp::Neq 
+#[inline] EqOp: BinOp = {
+    "==" => BinOp::Eq,
+    "!=" => BinOp::Neq
 }
 
 #[inline] AndOp: BinOp = {
@@ -385,60 +442,59 @@ Expr: Expr = {
     Primary,
 
     #[precedence(level="1")]
-    <l:@L> <op:Sp<UnaryOp>> <e:Expr> <r:@R>
-        => Expr::Unary(sp!(l, r; ExprUOp { op, expr: Box::new(e) })),
+    <l:@L> <op:UnaryOp> <or:@R> <e:Expr> <r:@R>
+        => Expr { span: Span::new(l, r), kind: ExprKind::Unary { op, op_span: Span::new(l, or), operand: Box::new(e) } },
 
     #[precedence(level="2")] #[assoc(side="left")]
-    <l:@L> <left:Expr> <op:Sp<MulOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
+    <l:@L> <lhs:Expr> <ol:@L> <op:MulOp> <or:@R> <rhs:Expr> <r:@R>
+        => Expr { span: Span::new(l, r), kind: ExprKind::Binary { op, op_span: Span::new(ol, or), lhs: Box::new(lhs), rhs: Box::new(rhs) } },
 
     #[precedence(level="3")] #[assoc(side="left")]
-    <l:@L> <left:Expr> <op:Sp<AddOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
+    <l:@L> <lhs:Expr> <ol:@L> <op:AddOp> <or:@R> <rhs:Expr> <r:@R>
+        => Expr { span: Span::new(l, r), kind: ExprKind::Binary { op, op_span: Span::new(ol, or), lhs: Box::new(lhs), rhs: Box::new(rhs) } },
 
     #[precedence(level="4")] #[assoc(side="left")]
-    <l:@L> <left:Expr> <op:Sp<RelOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
+    <l:@L> <lhs:Expr> <ol:@L> <op:RelOp> <or:@R> <rhs:Expr> <r:@R>
+        => Expr { span: Span::new(l, r), kind: ExprKind::Binary { op, op_span: Span::new(ol, or), lhs: Box::new(lhs), rhs: Box::new(rhs) } },
 
     #[precedence(level="5")] #[assoc(side="left")]
-    <l:@L> <left:Expr> <op:Sp<EqOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
+    <l:@L> <lhs:Expr> <ol:@L> <op:EqOp> <or:@R> <rhs:Expr> <r:@R>
+        => Expr { span: Span::new(l, r), kind: ExprKind::Binary { op, op_span: Span::new(ol, or), lhs: Box::new(lhs), rhs: Box::new(rhs) } },
 
     #[precedence(level="6")] #[assoc(side="left")]
-    <l:@L> <left:Expr> <op:Sp<AndOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
+    <l:@L> <lhs:Expr> <ol:@L> <op:AndOp> <or:@R> <rhs:Expr> <r:@R>
+        => Expr { span: Span::new(l, r), kind: ExprKind::Binary { op, op_span: Span::new(ol, or), lhs: Box::new(lhs), rhs: Box::new(rhs) } },
 
     #[precedence(level="7")] #[assoc(side="left")]
-    <l:@L> <left:Expr> <op:Sp<OrOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
+    <l:@L> <lhs:Expr> <ol:@L> <op:OrOp> <or:@R> <rhs:Expr> <r:@R>
+        => Expr { span: Span::new(l, r), kind: ExprKind::Binary { op, op_span: Span::new(ol, or), lhs: Box::new(lhs), rhs: Box::new(rhs) } },
 
-    ! => { errors.push(<>); Expr::Error }
+    #[precedence(level="8")]
+    <l:@L> <e:!> <r:@R> => { errors.push(e); Expr { span: Span::new(l, r), kind: ExprKind::Error } }
 }
 
 // ---- Primary: atoms, postfix indexing, parens. ----
 Primary: Expr = {
-    <array:PrimaryBase> <indices:Sp<ArrayIndex>*> => {
-        indices.into_iter().fold(array, |lv, ai| {
-	    Expr::Index(sp!(ai.span;
-		ExprIndex { array: Box::new(lv), index: Box::new(ai.node) }
-	    ))
+    <array:PrimaryBase> <indices:ArrayIndex*> => {
+        indices.into_iter().fold(array, |arr, (idx, ispan)| {
+	    let span = arr.span.to(ispan);
+	    Expr { span, kind: ExprKind::Index { array: Box::new(arr), index: Box::new(idx) } }
         })
     },
 }
 
 PrimaryBase: Expr = {
-    <lit:Lit>                            			=> Expr::Lit(lit),
-    <id:Sp<"ident">>                         			=> Expr::Id(id),
-    <l:@L> <id:Sp<"ident">> "(" <a:Comma<Expr>> ")" <r:@R>	=> Expr::Call(sp!(l, r; ProcCall { id, args: a })),
-    <l:@L> "length" "(" <e:Expr> ")" <r:@R>     		=> Expr::Length(sp!(l, r; Box::new(e))),
+    <l:@L> <lit:Lit> <r:@R>                          	=> Expr { span: Span::new(l, r), kind: ExprKind::Lit(lit) },
+    <id:Ident>                                       	=> Expr { span: id.span, kind: ExprKind::Id(id) },
+    <l:@L> <id:Ident> "(" <a:Comma<Expr>> ")" <r:@R>	=> Expr { span: Span::new(l, r), kind: ExprKind::Call(ProcCall { span: Span::new(l, r), id, args: a }) },
+    <l:@L> "length" "(" <e:Expr> ")" <r:@R>     	=> Expr { span: Span::new(l, r), kind: ExprKind::Length(Box::new(e)) },
     "(" <Expr> ")",
 }
 
 Lit: Lit = {
-    <l:@L> <n:"intlit"> <r:@R>          => Lit::IntLit(sp!(l, r; n as i128)),
-    <l:@L> <c:"charlit"> <r:@R>		=> Lit::CharLit(sp!(l, r; char::from_u32(c).expect("lexer should have rejected invalid codepoint"))),
-    <b:Sp<"boollit">> 			=> Lit::BoolLit(b),
-    <s:Sp<"strlit">>  			=> Lit::ArrLit(ArrLit::StringLit(s)),
-    "{" <exprs:CommaTrailing<Expr>> "}" => Lit::ArrLit(ArrLit::Array(exprs)),
+    <n:"intlit">  => Lit::Int(n as i128),
+    <c:"charlit"> => Lit::Char(char::from_u32(c).expect("lexer should have rejected invalid codepoint")),
+    <b:"boollit"> => Lit::Bool(b),
+    <s:"strlit">  => Lit::Arr(ArrLit::Str(s)),
+    "{" <exprs:CommaTrailing<Expr>> "}" => Lit::Arr(ArrLit::Array(exprs)),
 }
-
