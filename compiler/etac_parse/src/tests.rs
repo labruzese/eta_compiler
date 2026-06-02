@@ -4,7 +4,7 @@ mod tests {
     use crate::{parse, IParser, InterfaceParser, ParseResult, ProgramParser};
     use etac_errors::{Diagnostic, Level};
     use etac_lexer::Lexer;
-    use etac_span::{FileId, Sources};
+    use etac_span::{FileId, SourceCache};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -30,7 +30,7 @@ mod tests {
         pub fn first_error_pos(&self) -> Option<(usize, usize)> {
             let d = self.error_diags().into_iter().find(|d| d.loc.is_some())?;
             let loc = d.loc.as_ref().unwrap();
-            let cache = Sources::new();
+            let cache = SourceCache::new();
             cache.lc_index(&loc.file_id, loc.range.start).ok()
         }
         pub fn messages(&self) -> Vec<&str> {
@@ -53,7 +53,7 @@ mod tests {
         tmp.flush().expect("failed to flush temp source");
 
         let file_id = FileId::new(tmp.path().to_str().expect("non-utf8 temp path"));
-        let cache = Sources::new();
+        let cache = SourceCache::new();
         let source = cache.text(&file_id).expect("temp file should be readable");
         let mut lexer = Lexer::new(&cache, file_id.clone(), &source);
         let result = parse::<_, _, P, _>(&file_id, &mut lexer, &mut |x| x);

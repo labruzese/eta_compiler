@@ -1,7 +1,19 @@
 use etac_errors::{error, Diagnostic};
 use etac_lexer::{Token};
-use etac_span::{FileId}; 
+use etac_span::Span;
 use lalrpop_util::{lalrpop_mod, ParseError};
+
+/// helper macro for grammar.lalrpop
+/// file_id will be in scope, this will wrap a node with a span
+#[macro_export]
+macro_rules! sp {
+    ($l:expr, $r:expr; $node:expr) => {
+        Spanned::new(etac_span::Span::new($l, $r), $node)
+    };
+    ($span:expr; $node:expr) => {
+        Spanned::new($span, $node)
+    };
+}
 
 lalrpop_mod!(grammar);
 
@@ -12,7 +24,6 @@ pub trait IParser<ParseOut> {
 
     fn parse<__TOKEN, __TOKENS>(
         &self,
-        f: &etac_span::FileId,
         errors: &mut Vec<lalrpop_util::ErrorRecovery<usize, Token, Diagnostic>>,
         __tokens0: __TOKENS,
     ) -> Result<ParseOut, lalrpop_util::ParseError<usize, Token, Diagnostic>>
@@ -28,14 +39,13 @@ macro_rules! impl_iparser {
 
             fn parse<__TOKEN, __TOKENS>(
                 &self,
-                f: &etac_span::FileId,
                 errors: &mut Vec<lalrpop_util::ErrorRecovery<usize, Token, Diagnostic>>,
                 __tokens0: __TOKENS,
             ) -> Result<$out, lalrpop_util::ParseError<usize, Token, Diagnostic>>
             where
                 __TOKEN: grammar::__ToTriple,
                 __TOKENS: IntoIterator<Item = __TOKEN> {
-                <$parser>::parse(self, f, errors, __tokens0)
+                <$parser>::parse(self, errors, __tokens0)
             }
         }
     };
@@ -63,7 +73,6 @@ pub fn parse<
     Parser,
     ParseCallback,
 >(
-    file_id: &FileId, // to generate diagnostics
     lexer: &mut Lexer,
     parse_cb: &mut ParseCallback,
 ) -> ParseResult<Out> 
@@ -74,17 +83,17 @@ where
 {
     let mut recovered = Vec::new();
     let result = parse_cb(Parser::new()
-                    .parse(file_id, &mut recovered, lexer)
-                    .map_err(|e| to_diag(file_id, e)));
+                    .parse(&mut recovered, lexer)
+                    .map_err(|e| to_diag(e)));
 
-    let recovered_iter = recovered.into_iter().map(|r| to_diag(file_id, r.error));
+    let recovered_iter = recovered.into_iter().map(|r| to_diag(r.error));
     match result {
         Ok(out) => ParseResult { output: Some(out), errors: recovered_iter.collect() },
         Err(e)  => ParseResult { output: None, errors: recovered_iter.chain(std::iter::once(e)).collect() },
     }
 }
 
-fn to_diag(file: &FileId, err: ParseError<usize, Token, Diagnostic>) -> Diagnostic {
+fn to_diag(err: ParseError<usize, Token, Diagnostic>) -> Diagnostic {
     use ParseError::*;
     match err {
         User { error } => error,
@@ -92,16 +101,16 @@ fn to_diag(file: &FileId, err: ParseError<usize, Token, Diagnostic>) -> Diagnost
         UnrecognizedToken {
             token: (s, t, e),
             expected,
-        } => error!(file, s..e; "Unexpected token {t}")
+        } => error!(Span::new(s, e); "Unexpected token {t}")
             .with_primary_label(format_expected(&expected)),
 
         UnrecognizedEof { location, expected } => {
-            error!(file, location..location; "Unexpected end of file")
+            error!(Span::new(location, location); "Unexpected end of file")
                 .with_primary_label(format_expected(&expected))
         }
 
         ExtraToken { token: (s, t, e) } => {
-            error!(file, s..e; "Extra token {} after program", t).with_primary_label("unexpected")
+            error!(Span::new(s, e); "Extra token {} after program", t).with_primary_label("unexpected")
         }
 
         InvalidToken { location: _ } => {

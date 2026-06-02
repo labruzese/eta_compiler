@@ -1,14 +1,5 @@
 use etac_span::EtaSpan;
 
-/// helper macro for grammar.lalrpop
-/// file_id will be in scope, this will wrap a node with a span
-#[macro_export]
-macro_rules! sp {
-    ($fid:expr, $l:expr, $node:expr, $r:expr) => {
-        Spanned::new(EtaSpan::new($fid.clone(),$l, $r), $node)
-    };
-}
-
 mod printer;
 
 #[derive(Debug, Clone)]

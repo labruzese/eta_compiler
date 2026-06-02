@@ -1,8 +1,18 @@
+//! Source positions and the source map.
+//!
+//! All loaded files share one global byte-offset space: each file is assigned a
+//! `base` and occupies `[base, base + len)`, with a one-byte gap between files.
+//! A [`Span`] is therefore just two offsets into that space — 8 bytes, `Copy`,
+//! and file-agnostic. The owning file is recovered on demand via
+//! [`Sources::resolve`], so individual AST nodes never carry a `FileId`.
+
 use ariadne::{Cache, Source};
 use std::borrow::Borrow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
+use std::io;
+use std::ops::Range;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -30,25 +40,126 @@ impl Borrow<str> for FileId {
     fn borrow(&self) -> &str { &self.0 }
 }
 
-pub struct CachedSource {
+/// A half-open byte range `[lo, hi)` in the global source space owned by
+/// [`Sources`]. `Copy`, 8 bytes, and meaningless without the `Sources` that
+/// minted it — use [`Sources::resolve`] to recover a `(FileId, local range)`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Span {
+    pub lo: usize,
+    pub hi: usize,
+}
+
+impl Span {
+    /// Placeholder span for synthesized nodes. Should never reach a diagnostic.
+    pub const DUMMY: Span = Span { lo: 0, hi: 0 };
+
+    pub fn new(lo: impl Into<usize>, hi: impl Into<usize>) -> Self { Self { lo: lo.into(), hi: hi.into() } }
+
+    /// Smallest span covering both `self` and `other`.
+    pub fn to(self, other: Span) -> Span {
+        Span { lo: self.lo.min(other.lo), hi: self.hi.max(other.hi) }
+    }
+
+    pub fn len(self) -> usize { self.hi - self.lo }
+    pub fn is_empty(self) -> bool { self.lo == self.hi }
+}
+
+impl fmt::Debug for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}..{}", self.lo, self.hi)
+    }
+}
+
+/// Temporary alias so existing `EtaSpan` *type* references keep compiling during
+/// the Phase 1 migration. Delete once the Phase 2 AST refactor lands.
+pub type EtaSpan = Span;
+
+struct CachedSource {
     rc: Rc<str>,
     source: Source<Rc<str>>,
+    base: usize,
 }
 
-pub struct Sources {
-    ariadne_sources: RefCell<HashMap<FileId, CachedSource>>,
+/// Owns every loaded file, hands each a disjoint slice of the global byte space,
+/// and resolves global [`Span`]s back to a file + local range. Doubles as
+/// ariadne's [`Cache`].
+pub struct SourceCache {
+    files: RefCell<HashMap<FileId, CachedSource>>,
+    /// `(base, id)` kept sorted ascending by base (bases are handed out in
+    /// order), so `resolve` can binary-search.
+    index: RefCell<Vec<(usize, FileId)>>,
+    next_base: Cell<usize>,
 }
 
-impl Cache<FileId> for Sources {
+impl SourceCache {
+    pub fn new() -> Self {
+        Self {
+            files: RefCell::new(HashMap::new()),
+            index: RefCell::new(Vec::new()),
+            next_base: Cell::new(0),
+        }
+    }
+
+    /// Read `id` (if not already loaded), assign it a base, and return
+    /// `(base, text)`. The driver calls this before lexing so the lexer can
+    /// shift its local positions into the global space.
+    pub fn load(&self, id: &FileId) -> io::Result<(usize, Rc<str>)> {
+        self.ensure_loaded(id)?;
+        let files = self.files.borrow();
+        let f = files.get(id).expect("just loaded");
+        Ok((f.base, Rc::clone(&f.rc)))
+    }
+
+    /// Resolve a global span to its owning file and the local range within it.
+    pub fn resolve(&self, span: Span) -> (FileId, Range<usize>) {
+        let index = self.index.borrow();
+        debug_assert!(!index.is_empty(), "resolve() called before any file loaded");
+        // the file with the greatest base <= span.lo contains the span
+        let i = index.partition_point(|(base, _)| *base <= span.lo).saturating_sub(1);
+        let (base, id) = &index[i];
+        ((*id).clone(), (span.lo - base) as usize..(span.hi - base) as usize)
+    }
+
+    /// Full text of `id`; a pointer bump on a cache hit.
+    pub fn text(&self, id: &FileId) -> io::Result<Rc<str>> {
+        Ok(self.load(id)?.1)
+    }
+
+    /// 1-based `(line, col)` for a *local* byte offset within `id`.
+    pub fn lc_index(&self, id: &FileId, offset: usize) -> io::Result<(usize, usize)> {
+        self.ensure_loaded(id)?;
+        let map = self.files.borrow();
+        let source = &map.get(id).expect("just loaded").source;
+        let (_line, linen, coln) = source
+            .get_byte_line(offset)
+            .expect("requested line/col is out of bounds");
+        Ok((linen + 1, coln + 1))
+    }
+
+    fn ensure_loaded(&self, id: &FileId) -> io::Result<()> {
+        if self.files.borrow().contains_key(id) {
+            return Ok(());
+        }
+        let rc: Rc<str> = std::fs::read_to_string(id.as_str()).map(Rc::from)?;
+        let base = self.next_base.get();
+        let len: u32 = rc.len().try_into().expect("source file exceeds 4 GiB");
+        // +1 keeps adjacent files from sharing a boundary offset.
+        self.next_base.set(base + (len as usize) + 1);
+        self.index.borrow_mut().push((base, id.clone()));
+        self.files.borrow_mut().insert(
+            id.clone(),
+            CachedSource { rc: Rc::clone(&rc), source: Source::from(rc), base },
+        );
+        Ok(())
+    }
+}
+
+impl Cache<FileId> for SourceCache {
     type Storage = Rc<str>;
 
     fn fetch(&mut self, id: &FileId) -> Result<&Source<Rc<str>>, impl fmt::Debug> {
-        let map = self.ariadne_sources.get_mut();
-        if !map.contains_key(id) {
-            let rc: Rc<str> = std::fs::read_to_string(id.as_str()).map(Rc::from)?;
-            map.insert(id.clone(), CachedSource { rc: Rc::clone(&rc), source: Source::from(rc) });
-        }
-        Ok::<_, std::io::Error>(&map.get(id).unwrap().source)
+        self.ensure_loaded(id)?;
+        Ok::<_, io::Error>(&self.files.get_mut().get(id).expect("just loaded").source)
     }
 
     fn display<'a>(&self, id: &'a FileId) -> Option<impl fmt::Display + 'a> {
@@ -56,72 +167,9 @@ impl Cache<FileId> for Sources {
     }
 }
 
-impl Sources {
-    pub fn new() -> Self {
-        Self { ariadne_sources: RefCell::new(HashMap::new()) }
-    }
-
-    /// Returns Rc<str> — just a pointer bump on cache hit, and
-    /// callers can deref as &str whenever they need it.
-    pub fn text(&self, id: &FileId) -> Result<Rc<str>, std::io::Error> {
-        self.ensure_exists(id)?;
-        // Borrow lives only for this statement; we clone the Rc before it drops.
-        Ok(Rc::clone(&self.ariadne_sources.borrow().get(id).unwrap().rc))
-    }
-
-    pub fn lc_index(&self, id: &FileId, offset: usize) -> Result<(usize, usize), std::io::Error> {
-        self.ensure_exists(id)?;
-        let map = self.ariadne_sources.borrow();
-        let source = &map.get(id).unwrap().source;
-        // zero indexed
-        let (_line, linen, coln) = source
-            .get_byte_line(offset)
-            .expect("requested line/col is out of bounds");
-        Ok((linen+1, coln+1))
-    }
-
-    fn ensure_exists(&self, id: &FileId) -> Result<(), std::io::Error> {
-        if !self.ariadne_sources.borrow().contains_key(id) {
-            let rc: Rc<str> = std::fs::read_to_string(id.as_str()).map(Rc::from)?;
-            self.ariadne_sources.borrow_mut()
-                .insert(id.clone(), CachedSource { rc: Rc::clone(&rc), source: Source::from(rc) });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EtaSpan {
-    pub file_id: SourceId,
-    pub range: std::ops::Range<usize>,
-}
-
-impl EtaSpan {
-    pub fn new(file_id: SourceId, l: usize, r: usize) -> Self {
-        Self { file_id, range: (l..r) }
-    }
-}
-
-impl From<(&SourceId, std::ops::Range<usize>)> for EtaSpan {
-    fn from((file_id, range): (&SourceId, std::ops::Range<usize>)) -> Self {
-        EtaSpan { file_id: file_id.clone(), range }
-    }
-}
-
-/// So that ariadne can report errors given EtaSpans
-impl ariadne::Span for EtaSpan {
-    type SourceId = SourceId;
-    fn source(&self) -> &SourceId { &self.file_id }
-    fn start(&self) -> usize   { self.range.start }
-    fn end(&self)   -> usize   { self.range.end }
-}
-
-// for aridane 
-
-impl Default for Sources {
+impl Default for SourceCache {
     fn default() -> Self { Self::new() }
 }
-
 
 // for Logos
 impl Default for FileId {

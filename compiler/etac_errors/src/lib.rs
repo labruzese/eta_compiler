@@ -4,47 +4,17 @@ use std::{fmt::Debug, ops::Range, rc::Rc};
 use std::convert::Infallible;
 use ariadne::{Color, Label, Report, ReportKind};
 
-use etac_span::{EtaSpan, FileId, SourceId, Sources};
+use etac_span::{Span, FileId, SourceId, SourceCache};
 
 #[macro_export]
 macro_rules! error {
-    ($name:expr, $span:expr; $($arg:tt)*) => {
-        $crate::Diagnostic::new($crate::Level::Error, ($name, $span).into(), format!($($arg)*))
-    };
-    ($name:expr; $($arg:tt)*) => {
-        $crate::Diagnostic::new_no_loc($crate::Level::Error, $name, format!($($arg)*))
+    ($span:expr; $($arg:tt)*) => {
+        $crate::Diagnostic::new($crate::Level::Error, $span, format!($($arg)*))
     };
     ($($arg:tt)*) => {
-        $crate::Diagnostic::new_generic($crate::Level::Error, format!($($arg)*))
+        $crate::Diagnostic::new_no_loc($crate::Level::Error, format!($($arg)*))
     };
 }
-
-// these need to be fixed before they can be uncommented
-// #[macro_export]
-// macro_rules! warn {
-//     ($name:ident, $span:expr, $($arg:tt)*) => {
-//         $crate::Diagnostic::new($crate::Level::Warning, ($name, $span).into(), format!($($arg)*))
-//     };
-//     ($name:ident, $($arg:tt)*) => {
-//         $crate::Diagnostic::new_no_loc($crate::Level::Warning, $name, format!($($arg)*))
-//     };
-//     ($($arg:tt)*) => {
-//         $crate::Diagnostic::new_generic($crate::Level::Warning, format!($($arg)*))
-//     };
-// }
-//
-// #[macro_export]
-// macro_rules! note {
-//     ($name:expr, $span:expr, $($arg:tt)*) => {
-//         $crate::Diagnostic::new($crate::Level::Note, ($name, $span).into(), format!($($arg)*))
-//     };
-//     ($name:expr, $($arg:tt)*) => {
-//         $crate::Diagnostic::new_no_loc($crate::Level::Note, $name, format!($($arg)*))
-//     };
-//     ($($arg:tt)*) => {
-//         $crate::Diagnostic::new_generic($crate::Level::Note, format!($($arg)*))
-//     };
-// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -57,7 +27,7 @@ mod diagnostic;
 pub use diagnostic::*;
 
 /// write the diagnostic to stderr (pretty)
-pub fn emit(sources: &mut Sources, diag: Diagnostic) {
+pub fn emit(source_cache: &mut SourceCache, diag: Diagnostic) {
     let kind = match diag.level {
         Level::Error   => ReportKind::Error,
         Level::Warning => ReportKind::Warning,
@@ -66,16 +36,19 @@ pub fn emit(sources: &mut Sources, diag: Diagnostic) {
     static NO_SPAN: NoSpan = NoSpan {};
     static NO_CACHE: NoCache = NoCache {};
 
+
     match diag.loc {
         Some(loc) => {
-            let mut b = Report::build(kind, loc)
+            let floc = source_cache.resolve(loc);
+            let mut b = Report::build(kind, floc)
                 .with_message(diag.message);
             if let Some(c) = diag.code { b = b.with_code(c); }
             if let Some(n) = diag.note { b = b.with_code(n); }
             for (span, msg, color) in diag.labels {
-                b = b.with_label(Label::new(span).with_message(msg).with_color(color));
+                let fspan = source_cache.resolve(span);
+                b = b.with_label(Label::new(fspan).with_message(msg).with_color(color));
             }
-            let _ = b.finish().eprint(sources);
+            let _ = b.finish().eprint(source_cache);
         },
         None      => {
             let mut b = Report::build(kind, NO_SPAN)

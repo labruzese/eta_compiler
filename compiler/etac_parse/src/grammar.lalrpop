@@ -1,50 +1,46 @@
 use lalrpop_util::ErrorRecovery;
 use either::Either;
 use etac_ast::*;
-use etac_ast::sp;
 use etac_errors::{error, Diagnostic};
 use etac_lexer::Token;
-use etac_span::{FileId, EtaSpan};
+use etac_span::Span;
 
 grammar(
-    f: &FileId,
-    errors:  &mut Vec<ErrorRecovery<usize, Token, Diagnostic>>
+    errors: &mut Vec<ErrorRecovery<usize, Token, Diagnostic>>
 );
 
 // ---- macros ----
 
 /// Wrap any rule in a `Spanned`. Captures `@L`..`@R` around the inner rule.
 Sp<T>: Spanned<T> = 
-    <l:@L> <n:T> <r:@R> => sp!(f, l, n, r);
+    <l:@L> <n:T> <r:@R> => sp!(l, r; n);
 
 // One or more T separated by `,`, NO trailing comma.
 CommaPlus<T>: Vec<T> = {
     <e:T>				=> vec![e],
     <mut v:CommaPlus<T>> "," <e:T>	=> { v.push(e); v },
-};
+}
 
 // Zero or more T separated by `,`, NO trailing comma.
 Comma<T>: Vec<T> = {
     <v:CommaPlus<T>>	=> v,
                         => vec![],
-};
+}
 
 // Zero or more T separated by `,`, trailing comma permitted.
 CommaTrailing<T>: Vec<T> = {
     <v:CommaTrailingNonEmpty<T>>    => v,
 				    => vec![],
-};
+}
 
 CommaTrailingNonEmpty<T>: Vec<T> = {
     <e:T> "," <mut rest:CommaTrailingNonEmpty<T>> => {
-        let mut v = Vec::with_capacity(rest.len() + 1);
-        v.push(e);
-        v.append(&mut rest);
-        v
+        rest.insert(0, e);
+	rest
     },
     <e:T> ","	=> vec![e],
     <e:T>	=> vec![e],
-};
+}
 
 // ---- Token bindings ----
 extern {
@@ -103,18 +99,18 @@ extern {
 pub Program: Program = {
     <uses:UseList> <definitions:Definition+> => 
 	Program { uses, definitions },
-    <uses:UseList> <r:@R> =>? Err(error!(f, r..r; "Program must contain at least one definition").with_primary_label("expected definition").into())
-};
+    <uses:UseList> <r:@R> =>? Err(error!(Span::new(r, r); "Program must contain at least one definition").with_primary_label("expected definition").into())
+}
 
 pub Interface: Interface = {
     <items:InterfaceItem+> => Interface { items },
-    <r:@R> =>? Err(error!(f, r..r; "Interface must contain at least one method declaration").with_primary_label("expected declaration").into())
-};
+    <r:@R> =>? Err(error!(Span::new(r, r); "Interface must contain at least one method declaration").with_primary_label("expected declaration").into())
+}
 
 InterfaceItem: InterfaceItem = {
     <m:Sp<MethodDecl>> => InterfaceItem::Decl(m),
     ! => { errors.push(<>); InterfaceItem::Error }
-};
+}
 
 UseList: Vec<Spanned<Use>> = {
     <mut h:UseList> <t:Sp<Use>> => {
@@ -122,17 +118,17 @@ UseList: Vec<Spanned<Use>> = {
 	h
     },
     => vec![],
-};
+}
 
 Use: Use = {
     "use" <id:Sp<"ident">> ";"? => Use { id },
-};
+}
 
 Definition: Definition = {
     <m:Sp<Method>>    => Definition::Method(m),
     <gd:Sp<GlobDecl>> => Definition::GlobDecl(gd),
     ! => { errors.push(<>); Definition::Error }
-};
+}
 
 MethodDecl: MethodDecl = {
     <id:Sp<"ident">> "(" <params:Comma<Sp<Decl>>> ")" <ret:(":" <CommaPlus<Type>>)?> =>
@@ -141,7 +137,7 @@ MethodDecl: MethodDecl = {
             params,
             ret_types: ret.unwrap_or_default(),
         },
-};
+}
 
 Method: Method = {
     <decl:Sp<MethodDecl>> <body:Sp<FuncBlock>> => {
@@ -153,21 +149,21 @@ Method: Method = {
     <decl:Sp<MethodDecl>> <l:@L> <e:!> <r:@R> => {
 	errors.push(e);
 	let MethodDecl { id, params, ret_types } = decl.node;
-	let body = sp!(f, l, Block { stmts: vec![Stmt::Error] }, r);
+	let body = sp!(l, r; Block { stmts: vec![Stmt::Error] });
 	Method { id, params, ret_types, body }
     },
-};
+}
 
 GlobDecl: GlobDecl = {
     <id:Sp<"ident">> ":" <typ:GlobDeclType> <val:("=" <GlobalValue>)?> ";"? => 
 	GlobDecl { id, typ, val },
-};
+}
 
 GlobalValue: Value = {
-    <l:@L> "-" <n:"intlit"> <r:@R> 	=> Value::IntLit(sp!(f, l, -(n as i128), r)),
-    <l:@L> <n:"intlit"> <r:@R>    	=> Value::IntLit(sp!(f, l, n as i128, r)),
-    <l:@L> <b:"boollit"> <r:@R>		=> Value::BoolLit(sp!(f, l, b, r)),
-};
+    <l:@L> "-" <n:"intlit"> <r:@R> 	=> Value::IntLit(sp!(l, r; -(n as i128))),
+    <l:@L> <n:"intlit"> <r:@R>    	=> Value::IntLit(sp!(l, r; n as i128)),
+    <l:@L> <b:"boollit"> <r:@R>		=> Value::BoolLit(sp!(l, r; b)),
+}
 
 
 // ----- Types -----
@@ -180,10 +176,10 @@ Type: Type = {
 
 SizedDim: (usize, Expr, usize) = {
     <l:@L> "[" <size:Expr> "]" <r:@R> => (l, size, r)
-};
+}
 UnsizedDim: (usize, usize) = {
     <l:@L> "[" "]" <r:@R> => (l, r)
-};
+}
 
 TypeUnsized: Type = {
     <base:BaseType> <sdims:SizedDim*> <udims:UnsizedDim+> => {
@@ -192,41 +188,41 @@ TypeUnsized: Type = {
             .collect();
         all.into_iter().rev().fold(base, |inner, dim| match dim {
             Either::Left((l, size, r)) =>
-                Type::SizedArray(sp!(f, l, SizedArray { of: Box::new(inner), size }, r)),
+                Type::SizedArray(sp!(l, r; SizedArray { of: Box::new(inner), size })),
             Either::Right((l, r)) =>
-                Type::UnsizedArray(sp!(f, l, UnsizedArray { of: Box::new(inner) }, r)),
+                Type::UnsizedArray(sp!(l, r; UnsizedArray { of: Box::new(inner) })),
         })
     }
-};
+}
 
 TypeSized: Type = {
     <BaseType>,
     <base:BaseType> <dims:SizedDim+> => {
         dims.into_iter().rev().fold(base, |inner, (l, size, r)| {
-            Type::SizedArray(sp!(f, l, SizedArray { of: Box::new(inner), size }, r))
+            Type::SizedArray(sp!(l, r; SizedArray { of: Box::new(inner), size }))
         })
     }
-};
+}
 
 GlobDeclType: Type = {
     <BaseType>,
     <TypeUnsized>,
     <base:BaseType> "[" <l:@L> <size:Expr> <r:@R> "]" =>? 
-        Err(error!(f, l..r; "Global arrays can't be initialized at the point of declaration")
+        Err(error!(Span::new(l, r); "Global arrays can't be initialized at the point of declaration")
 	    .with_primary_label("initialization happens here")
 	)?
-};
+}
 
 BaseType: Type = {
-    <l:@L> <s:"int"> <r:@R> 	=> Type::Int((f, l..r).into()),
-    <l:@L> <s:"bool"> <r:@R>	=> Type::Bool((f, l..r).into()),
+    <l:@L> <s:"int"> <r:@R> 	=> Type::Int(Span::new(l, r)),
+    <l:@L> <s:"bool"> <r:@R>	=> Type::Bool(Span::new(l, r)),
 }
 
 // ----- Blocks -----
 
 Block: Block = {
     "{" <stmts:(<Stmt> ";"?)*> "}" => Block { stmts },
-};
+}
 
 // can end with return
 FuncBlock: Block = {
@@ -234,7 +230,7 @@ FuncBlock: Block = {
 	if let Some(r) = r { stmts.extend(vec![Stmt::ReturnStmt(r)]); }
 	Block { stmts }
     },
-};
+}
 
 
 // ---- Statements (General and Control Flow) ----
@@ -248,24 +244,24 @@ Stmt: Stmt = {
 
 ReturnStmt: ReturnStmt = {
     "return" <values:Comma<Expr>> ";"? => ReturnStmt { values },
-};
+}
 
 // elses can be matched
 StmtOpen: Stmt = {
     <s:Sp<IfStmtOpen>>    => Stmt::IfStmt(s),
     <s:Sp<WhileStmtOpen>> => Stmt::WhileStmt(s),
-};
+}
 
 IfStmtOpen: IfStmt = {
     "if" <cond:Expr> <t:Stmt> => 
 	IfStmt { cond, then_branch: Box::new(t), else_branch: None },
     "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtOpen> => 
 	IfStmt { cond, then_branch: Box::new(t), else_branch: Some(Box::new(e)) },
-};
+}
 WhileStmtOpen: WhileStmt = {
     "while" <cond:Expr> <body:StmtOpen> => 
 	WhileStmt { cond, body: Box::new(body) }
-};
+}
 
 // nothing for else to match
 StmtClosed: Stmt = {
@@ -275,29 +271,29 @@ StmtClosed: Stmt = {
     <pcall:Sp<ProcCall>>	 => Stmt::ProcCall(pcall),
     <decls:DeclTargets>		 => Stmt::Decls(decls),
     <l:@L> <ts:DeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> => 
-	Stmt::Assignment(sp!(f, l, 
+	Stmt::Assignment(sp!(l, r;
 	    Assignment { 
 		targets: ts.into_iter().map(|d| Target::Decl(d)).collect(), 
 		values 
-	    }, r)),
+	    })),
     <l:@L> <ts:NonDeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> => 
-	Stmt::Assignment(sp!(f, l, Assignment { targets: ts, values }, r)),
-};
+	Stmt::Assignment(sp!(l, r; Assignment { targets: ts, values })),
+}
 
 IfStmtClosed: IfStmt = {
     "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtClosed> => 
 	IfStmt { cond, then_branch: Box::new(t), else_branch: Some(Box::new(e)) }
-};
+}
 WhileStmtClosed: WhileStmt = {
     "while" <cond:Expr> <body:StmtClosed> => 
 	WhileStmt { cond, body: Box::new(body) }
-};
+}
 
 // ---- Non-Control Flow Statements ----
 
 Decl: Decl = {
     <id:Sp<"ident">> ":" <typ:Type> => Decl { id, typ },
-};
+}
 
 // pure decl target also valid as multi-decl
 DeclTargets: Vec<Spanned<Decl>> = {
@@ -311,7 +307,7 @@ DeclTargets: Vec<Spanned<Decl>> = {
 // contains r0 non-decl target (not valid multi-decl)
 NonDeclTargets: Vec<Target> = {
     <t:NonDeclTarget> => vec![t],
-    <mut p:DeclTargets> "," <n:NonDeclTarget> =>
+    <p:DeclTargets> "," <n:NonDeclTarget> =>
 	p.into_iter().map(|d| Target::Decl(d)).chain(std::iter::once(n)).collect(),
     <mut p:NonDeclTargets> "," <n:NonDeclTarget> => {
 	p.extend(vec![n]);
@@ -321,7 +317,7 @@ NonDeclTargets: Vec<Target> = {
 	p.extend(vec![Target::Decl(n)]);
 	p
     }
-};
+}
 
 NonDeclTarget: Target = {
     <l:LValue> 	 => Target::LValue(l),
@@ -331,7 +327,7 @@ NonDeclTarget: Target = {
 LValue: LValue = {
     <base:LValueBase> <indices:Sp<ArrayIndex>*> => {
         indices.into_iter().fold(base, |lv, ai| {
-            LValue::Index(sp!(f, ai.span.range.start, LValueIndex { of: Box::new(lv), index: ai.node }, ai.span.range.end))
+            LValue::Index(sp!(ai.span; LValueIndex { of: Box::new(lv), index: ai.node }))
         })
     },
 }
@@ -341,8 +337,8 @@ LValueBase: LValue = {
 }
 
 ProcCall: ProcCall = {
-    <id:Sp<"ident">> "(" <args:Comma<Expr>> ")" => ProcCall { id, args }
-};
+    <id:Sp<"ident">> "(" <args:Comma<Expr>> ")" => ProcCall { id, args },
+}
 
 #[inline] ArrayIndex: Expr = { "[" <Expr> "]" }
 
@@ -351,29 +347,29 @@ ProcCall: ProcCall = {
 #[inline] UnaryOp: UOp = { 
     "-" => UOp::Neg,
     "!" => UOp::Not 
-};
+}
 
 #[inline] MulOp: BinOp = {
     "*"   => BinOp::Mul,
     "*>>" => BinOp::HighMul,
     "/"   => BinOp::Div,
     "%"   => BinOp::Mod,
-};
+}
 
 #[inline] AddOp: BinOp = { 
     "+" => BinOp::Add,
     "-" => BinOp::Sub
-};
+}
 
 #[inline] RelOp: BinOp = {
     "<"  => BinOp::Lt, "<=" => BinOp::Le,
     ">"  => BinOp::Gt, ">=" => BinOp::Ge,
-};
+}
 
 #[inline] EqOp: BinOp = { 
     "==" => BinOp::Eq, 
     "!=" => BinOp::Neq 
-};
+}
 
 #[inline] AndOp: BinOp = {
     "&" => BinOp::And,
@@ -390,62 +386,59 @@ Expr: Expr = {
 
     #[precedence(level="1")]
     <l:@L> <op:Sp<UnaryOp>> <e:Expr> <r:@R>
-        => Expr::Unary(sp!(f, l, ExprUOp { op, expr: Box::new(e) }, r)),
+        => Expr::Unary(sp!(l, r; ExprUOp { op, expr: Box::new(e) })),
 
     #[precedence(level="2")] #[assoc(side="left")]
     <l:@L> <left:Expr> <op:Sp<MulOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(f, l, ExprBinOp { op, left: Box::new(left), right: Box::new(right) }, r)),
+        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
 
     #[precedence(level="3")] #[assoc(side="left")]
     <l:@L> <left:Expr> <op:Sp<AddOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(f, l, ExprBinOp { op, left: Box::new(left), right: Box::new(right) }, r)),
+        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
 
     #[precedence(level="4")] #[assoc(side="left")]
     <l:@L> <left:Expr> <op:Sp<RelOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(f, l, ExprBinOp { op, left: Box::new(left), right: Box::new(right) }, r)),
+        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
 
     #[precedence(level="5")] #[assoc(side="left")]
     <l:@L> <left:Expr> <op:Sp<EqOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(f, l, ExprBinOp { op, left: Box::new(left), right: Box::new(right) }, r)),
+        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
 
     #[precedence(level="6")] #[assoc(side="left")]
     <l:@L> <left:Expr> <op:Sp<AndOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(f, l, ExprBinOp { op, left: Box::new(left), right: Box::new(right) }, r)),
+        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
 
     #[precedence(level="7")] #[assoc(side="left")]
     <l:@L> <left:Expr> <op:Sp<OrOp>> <right:Expr> <r:@R>
-        => Expr::Binary(sp!(f, l, ExprBinOp { op, left: Box::new(left), right: Box::new(right) }, r)),
+        => Expr::Binary(sp!(l, r; ExprBinOp { op, left: Box::new(left), right: Box::new(right) })),
 
     ! => { errors.push(<>); Expr::Error }
-};
+}
 
 // ---- Primary: atoms, postfix indexing, parens. ----
 Primary: Expr = {
     <array:PrimaryBase> <indices:Sp<ArrayIndex>*> => {
         indices.into_iter().fold(array, |lv, ai| {
-	    Expr::Index(sp!(
-		f,
-		ai.span.range.start,
-		ExprIndex { array: Box::new(lv), index: Box::new(ai.node) },
-		ai.span.range.end
+	    Expr::Index(sp!(ai.span;
+		ExprIndex { array: Box::new(lv), index: Box::new(ai.node) }
 	    ))
         })
     },
-};
+}
 
 PrimaryBase: Expr = {
     <lit:Lit>                            			=> Expr::Lit(lit),
     <id:Sp<"ident">>                         			=> Expr::Id(id),
-    <l:@L> <id:Sp<"ident">> "(" <a:Comma<Expr>> ")" <r:@R>	=> Expr::Call(sp!(f, l, ProcCall { id, args: a }, r)),
-    <l:@L> "length" "(" <e:Expr> ")" <r:@R>     		=> Expr::Length(sp!(f, l, Box::new(e), r)),
+    <l:@L> <id:Sp<"ident">> "(" <a:Comma<Expr>> ")" <r:@R>	=> Expr::Call(sp!(l, r; ProcCall { id, args: a })),
+    <l:@L> "length" "(" <e:Expr> ")" <r:@R>     		=> Expr::Length(sp!(l, r; Box::new(e))),
     "(" <Expr> ")",
 }
 
 Lit: Lit = {
-    <l:@L> <n:"intlit"> <r:@R>          => Lit::IntLit(sp!(f, l, n as i128, r)),
-    <l:@L> <c:"charlit"> <r:@R>		=> Lit::CharLit(sp!(f, l, char::from_u32(c).expect("lexer should have rejected invalid codepoint"), r)),
+    <l:@L> <n:"intlit"> <r:@R>          => Lit::IntLit(sp!(l, r; n as i128)),
+    <l:@L> <c:"charlit"> <r:@R>		=> Lit::CharLit(sp!(l, r; char::from_u32(c).expect("lexer should have rejected invalid codepoint"))),
     <b:Sp<"boollit">> 			=> Lit::BoolLit(b),
     <s:Sp<"strlit">>  			=> Lit::ArrLit(ArrLit::StringLit(s)),
     "{" <exprs:CommaTrailing<Expr>> "}" => Lit::ArrLit(ArrLit::Array(exprs)),
-};
+}
 

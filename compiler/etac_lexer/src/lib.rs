@@ -1,11 +1,15 @@
-use std::{fmt, num::ParseIntError};
+use std::{fmt::{self, Display}, num::ParseIntError};
 
 use etac_errors::{error, Diagnostic};
-use etac_span::{FileId, Sources};
+use etac_span::{Span};
 use logos::Logos;
 
+fn global_span(lex: &logos::Lexer<'_, Token>) -> Span {
+    Span::new(lex.extras + lex.span().start, lex.extras + lex.span().end)
+}
+
 fn lexer_error(lex: &mut logos::Lexer<'_, Token>) -> Diagnostic {
-    error!(&lex.extras.1, lex.span(); "unknown token").with_primary_label("this token")
+    error!(global_span(lex); "unknown token").with_primary_label("this token")
 }
 
 // api
@@ -14,21 +18,9 @@ pub struct Lexer<'input> {
     inner: logos::SpannedIter<'input, Token>,
 }
 impl<'source> Lexer<'source> {
-    pub fn new(cache: &'source Sources, file_id: FileId, source: &'source <Token as Logos>::Source) -> Self
+    pub fn new(base: usize, source: &'source <Token as Logos>::Source) -> Self
     {
-        Self { inner: <Token as Logos>::lexer_with_extras(source, (cache, file_id)).spanned() }
-    }
-
-    /// Gives you a lexer that always succeeds
-    /// More specifically it yields `Token::Error((diagnostic, (line, col)))` on failure
-    pub fn as_recoverable(self) -> impl Iterator<Item = (usize, Token, usize)> {
-        let span = self.inner.span();
-        let cache = self.inner.extras.0;
-        let file_id = self.inner.extras.1.clone();
-        self.map(move |tok_res| {
-            let lc  = cache.lc_index(&file_id, span.start).expect("failed line-col index");
-            tok_res.unwrap_or_else(|e|(span.start, Token::Error((e, lc)), span.end))
-        })
+        Self { inner: <Token as Logos>::lexer_with_extras(source, base).spanned() }
     }
 }
 
@@ -37,20 +29,21 @@ impl Iterator for Lexer<'_> {
     type Item = Result<(usize, Token, usize), Diagnostic>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (next, span) = self.inner.next()?;
+        let (next, local_span) = self.inner.next()?;
+        let base = self.inner.extras;
+        let span = Span::new(base + local_span.start, base + local_span.end);
         match next {
-            Ok(tok) => Some(Ok((span.start, tok, span.end))),
+            Ok(tok) => Some(Ok((span.lo as usize, tok, span.hi as usize))),
             Err(diag) => Some(Err(diag)),
         }
     }
 }
 
-
 // logos
 #[derive(Debug, Clone, PartialEq, Logos)]
 #[logos(skip r"[ \t\n\f\r]+")]
 #[logos(skip r"//[^\n]*")]
-#[logos(extras = (&'s Sources, FileId))]
+#[logos(extras = usize)]
 #[logos(error(Diagnostic, lexer_error))]
 pub enum Token {
     // Keywords
@@ -148,15 +141,13 @@ pub enum Token {
     Land,
     #[token("|")]
     Lor,
-    // sentianal recovery token
-    Error((Diagnostic, (usize, usize)))
 }
 
 // Callbacks
 
 fn parse_int(lex: &mut LogosLexer) -> Result<u64, Diagnostic> {
     lex.slice().parse::<u64>().map_err(|err: ParseIntError| {
-        error!(&lex.extras.1, lex.span(); "illegal integer literal: {}", err).with_primary_label(
+        error!(global_span(lex); "illegal integer literal: {}", err).with_primary_label(
             err.to_string().replace("number too extreme to fit in target type", "integer out of range"),
         )
     })
@@ -167,13 +158,13 @@ fn parse_int(lex: &mut LogosLexer) -> Result<u64, Diagnostic> {
 fn parse_char(lex: &mut LogosLexer) -> Result<u32, Diagnostic> {
     let raw = lex.slice();
     if raw == "''" {
-        return Err(error!(&lex.extras.1, lex.span(); "empty character literal")
+        return Err(error!(global_span(lex); "empty character literal")
             .with_primary_label("here"))
     };
     // Strip surrounding quotes.
     let inner = &raw[1..raw.len() - 1];
     decode_char_content(inner).ok_or_else(|| {
-        error!(&lex.extras.1, lex.span(); "invalid character literal: {}", raw)
+        error!(global_span(lex); "invalid character literal: {}", raw)
             .with_primary_label(format!("cannot decode {}", raw))
     })
 }
@@ -198,7 +189,8 @@ fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
         let bs_span = base + i..base + i + 1;
 
         let (ei, esc) = it.next().ok_or_else(|| {
-            error!(&lex.extras.1, bs_span.clone(); "unterminated escape in string literal")
+            let span = Span::new(lex.extras + bs_span.start, lex.extras + bs_span.end);
+            error!(span; "unterminated escape in string literal")
                 .with_primary_label("dangling backslash")
         })?;
 
@@ -216,7 +208,8 @@ fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
                     Some((_, '{')) => {}
                     _ => {
                         let s = base + ei..base + ei + 1;
-                        return Err(error!(&lex.extras.1, s; "malformed unicode escape")
+                        let span = Span::new(lex.extras + s.start, lex.extras + s.end);
+                        return Err(error!(span; "malformed unicode escape")
                             .with_primary_label("expected `{` after `\\x`"));
                     }
                 }
@@ -233,22 +226,26 @@ fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
                         }
                         Some((j, _)) => {
                             let s = base + j..base + j + 1;
+                            let span = Span::new(lex.extras + s.start, lex.extras + s.end);
                             return Err(
-                                error!(&lex.extras.1, s; "malformed unicode escape")
+                                error!(span; "malformed unicode escape")
                                     .with_primary_label("expected hex digits and `}`"),
                             );
                         }
                         None => {
                             // will always be a closing quote in this context
                             let Some((j, _)) = it.peek() else { 
+                                let s = base+i..lex.span().end;
+                                let span = Span::new(lex.extras + s.start, lex.extras + s.end);
                                 return Err(
-                                    error!(&lex.extras.1, base+i..lex.span().end; "unterminated unicode escape")
+                                    error!(span; "unterminated unicode escape")
                                         .with_primary_label("expected hex digits and '}'")
                                 );
                             };
                             let s = base + j..base + j + 1;
+                            let span = Span::new(lex.extras + s.start, lex.extras + s.end);
                             return Err(
-                                error!(&lex.extras.1, s; "malformed unicode escape")
+                                error!(span; "malformed unicode escape")
                                     .with_primary_label("expected to find `}`"),
                             );
                         }
@@ -257,8 +254,9 @@ fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
 
                 if hex.is_empty() {
                     let s = base + i..base + ei + 3;
+                    let span = Span::new(lex.extras + s.start, lex.extras + s.end);
                     return Err(
-                        error!(&lex.extras.1, s; "empty unicode escape")
+                        error!(span; "empty unicode escape")
                             .with_primary_label("expected at least one hex digit between `{` and `}`"),
                     );
                 }
@@ -269,15 +267,17 @@ fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
                 };
 
                 let codepoint = u32::from_str_radix(&hex, 16).map_err(|e| {
-                    error!(&lex.extras.1, hex_span.clone(); "invalid unicode escape: {}", e)
+                    let span = Span::new(lex.extras + hex_span.start, lex.extras + hex_span.end);
+                    error!(span; "invalid unicode escape: {}", e)
                         .with_primary_label(e.to_string())
                 })?;
 
                 match char::from_u32(codepoint) {
                     Some(ch) => out.push(ch),
                     None => {
+                        let span = Span::new(lex.extras + hex_span.start, lex.extras + hex_span.end);
                         return Err(
-                            error!(&lex.extras.1, hex_span; "invalid unicode codepoint: U+{:X}", codepoint)
+                            error!(span; "invalid unicode codepoint: U+{:X}", codepoint)
                                 .with_primary_label("not a valid unicode scalar"),
                         )
                     }
@@ -285,8 +285,9 @@ fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
             }
             other => {
                 let s = base + ei..base + ei + other.len_utf8();
+                let span = Span::new(lex.extras + s.start, lex.extras + s.end);
                 return Err(
-                    error!(&lex.extras.1, s; "unknown escape: \\{}", other)
+                    error!(span; "unknown escape: \\{}", other)
                         .with_primary_label(format!("unknown escape: \\{}", other)),
                 );
             }
@@ -339,7 +340,8 @@ fn decode_char_content(inner: &str) -> Option<u32> {
     }
 }
 
-impl fmt::Display for Token {
+
+impl Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Token::KeywordUse => write!(f, "use"),
@@ -385,7 +387,6 @@ impl fmt::Display for Token {
             Token::RelOpLe => write!(f, "<="),
             Token::Land => write!(f, "&"),
             Token::Lor => write!(f, "|"),
-            Token::Error((diag, (line, col))) => write!(f, "{}:{} error:{}", line, col, diag.message)
         }
     }
 }

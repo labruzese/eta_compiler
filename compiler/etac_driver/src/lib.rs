@@ -2,16 +2,16 @@ use etac_errors::{emit, error, Diagnostic, Level};
 use etac_lexer::Token;
 use etac_parse::ParseResult;
 use etac_session::{cli::Flags, logger::Logger};
-use etac_span::{FileId, InterfaceId, SourceId, Sources};
+use etac_span::{FileId, InterfaceId, SourceId, SourceCache};
 
 pub fn run(flags: Flags) -> Result<(), ()> {
-    let mut cache = Sources::new();
+    let mut cache = SourceCache::new();
     let mut sources: Vec<SourceId> = vec![];
     let mut interfaces: Vec<InterfaceId> = vec![];
 
     for file in &flags.source_files {
         let Some(file_str) = file.to_str() else {
-            emit(&mut cache, error!("non-UTF8 file name {}", file.to_string_lossy()));
+            emit(&mut cache, error!("non-UTF9 file name {}", file.to_string_lossy()));
             return Err(());
         };
         match file.extension().and_then(|x| x.to_str()) {
@@ -26,13 +26,13 @@ pub fn run(flags: Flags) -> Result<(), ()> {
     Ok(())
 }
 
-fn drive<Out, Parser>(flags: &Flags, cache: &mut Sources, logger: &Logger, files: &[FileId]) -> Result<(), ()>
+fn drive<Out, Parser>(flags: &Flags, cache: &mut SourceCache, logger: &Logger, files: &[FileId]) -> Result<(), ()>
 where
     Parser: etac_parse::IParser<Out>,
     Out: std::fmt::Display,
 {
     for file_id in files {
-        let source = match cache.text(file_id) {
+        let (base, source) = match cache.load(file_id) {
             Ok(s) => s,
             Err(io_err) => {
                 emit(cache, io_err.into());
@@ -46,15 +46,15 @@ where
         let tok_map_fn = |lex_result| {
             if lex_logging {
                 token_callback(logger, file_id, &cache, &lex_result)?;
-                if lex_result.is_err() || matches!(lex_result, Ok((_, Token::Error(_), _))) {
+                if lex_result.is_err() {
                     lex_logging = false
                 }
             }
             lex_result
         };
 
-        let mut lexer = etac_lexer::Lexer::new(&cache, file_id.clone(), &source).map(tok_map_fn);
-        let parse_res = etac_parse::parse::<_, _, Parser, _>(file_id, &mut lexer, &mut |x| x);
+        let mut lexer = etac_lexer::Lexer::new(base, &source).map(tok_map_fn);
+        let parse_res = etac_parse::parse::<_, _, Parser, _>(&mut lexer, &mut |x| x);
 
         match parse_res {
             ParseResult {
@@ -78,8 +78,7 @@ where
                             diag.loc
                                 .as_ref()
                                 .expect("syntactic error must have location")
-                                .range
-                                .start,
+                                .lo,
                         )
                         .map_err(|e| emit(cache, e.into()))?;
                     logger
@@ -106,8 +105,7 @@ where
                             diag.loc
                                 .as_ref()
                                 .expect("syntactic error must have location")
-                                .range
-                                .start,
+                                .lo,
                         )
                         .map_err(|e| emit(cache, e.into()))?;
                     logger
@@ -128,7 +126,7 @@ where
 fn token_callback(
     logger: &Logger,
     file_id: &FileId,
-    cache: &Sources,
+    cache: &SourceCache,
     lex_result: &Result<(usize, Token, usize), Diagnostic>,
 ) -> Result<(), Diagnostic> {
     match lex_result {
@@ -139,7 +137,7 @@ fn token_callback(
         Err(diag) => {
             let loc = cache.lc_index(
                 file_id,
-                diag.loc.as_ref().expect("lexcial error must have location").range.start,
+                diag.loc.as_ref().expect("lexcial error must have location").lo,
             )?;
             if diag.level == etac_errors::Level::Error {
                 logger.log_lexical_error(file_id, loc, &diag.message)?
