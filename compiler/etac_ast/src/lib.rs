@@ -1,6 +1,6 @@
 //! Abstract syntax tree.
 //!
-//! Span placement (Option B): every node is *either* a struct with its own
+//! Span placement: every node is *either* a struct with its own
 //! `span: Span` field, *or* an enum of the form `Foo { span, kind: FooKind }`.
 //! So `node.span` is always available — including the `Error` recovery variants.
 //! Small payloads are inlined as struct-variants (`ExprKind::Binary { .. }`),
@@ -9,27 +9,20 @@
 //! span-free and inherit their location from the enclosing `Expr`.
 
 use etac_span::Span;
+use etac_derive_spanned::Spanned;
 
 mod printer;
 
 pub type Id = String;
 
 /// Uniform span access for any node that carries one.
-pub trait HasSpan {
+pub trait Spanned {
     fn span(&self) -> Span;
-}
-
-macro_rules! impl_has_span {
-    ($($t:ty),* $(,)?) => {
-        $(impl HasSpan for $t {
-            fn span(&self) -> Span { self.span }
-        })*
-    };
 }
 
 // ---- Identifiers ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Ident {
     pub span: Span,
     pub sym: Id,
@@ -48,13 +41,13 @@ pub struct Interface {
     pub items: Vec<InterfaceItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Use {
     pub span: Span,
     pub id: Ident,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Definition {
     pub span: Span,
     pub kind: DefinitionKind,
@@ -67,7 +60,7 @@ pub enum DefinitionKind {
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct InterfaceItem {
     pub span: Span,
     pub kind: InterfaceItemKind,
@@ -81,7 +74,7 @@ pub enum InterfaceItemKind {
 
 // ---- Methods & globals ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct MethodDecl {
     pub span: Span,
     pub id: Ident,
@@ -89,7 +82,7 @@ pub struct MethodDecl {
     pub ret_types: Vec<Type>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Method {
     pub span: Span,
     pub id: Ident,
@@ -98,7 +91,7 @@ pub struct Method {
     pub body: Block,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct GlobDecl {
     pub span: Span,
     pub id: Ident,
@@ -106,7 +99,7 @@ pub struct GlobDecl {
     pub val: Option<Value>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Value {
     pub span: Span,
     pub kind: ValueKind,
@@ -118,7 +111,7 @@ pub enum ValueKind {
     Bool(bool),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Decl {
     pub span: Span,
     pub id: Ident,
@@ -127,7 +120,7 @@ pub struct Decl {
 
 // ---- Types ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Type {
     pub span: Span,
     pub kind: TypeKind,
@@ -143,13 +136,13 @@ pub enum TypeKind {
 
 // ---- Blocks & statements ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Block {
     pub span: Span,
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Stmt {
     pub span: Span,
     pub kind: StmtKind,
@@ -169,7 +162,7 @@ pub enum StmtKind {
 
 // ---- Targets & lvalues ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Target {
     pub span: Span,
     pub kind: TargetKind,
@@ -189,7 +182,7 @@ impl Target {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct LValue {
     pub span: Span,
     pub kind: LValueKind,
@@ -204,7 +197,7 @@ pub enum LValueKind {
 
 // ---- Calls ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct ProcCall {
     pub span: Span,
     pub id: Ident,
@@ -213,7 +206,7 @@ pub struct ProcCall {
 
 // ---- Expressions ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Spanned)]
 pub struct Expr {
     pub span: Span,
     pub kind: ExprKind,
@@ -270,8 +263,3 @@ pub enum ArrLit {
     Str(String),
     Array(Vec<Expr>),
 }
-
-impl_has_span!(
-    Ident, Use, Definition, InterfaceItem, MethodDecl, Method, GlobDecl, Value,
-    Decl, Type, Block, Stmt, Target, LValue, ProcCall, Expr,
-);

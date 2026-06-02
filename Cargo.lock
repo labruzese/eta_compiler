@@ -306,8 +306,17 @@ dependencies = [
 name = "etac_ast"
 version = "0.1.0"
 dependencies = [
+ "etac_derive_spanned",
  "etac_span",
  "pretty",
+]
+
+[[package]]
+name = "etac_derive_spanned"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]
