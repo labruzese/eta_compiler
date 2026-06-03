@@ -39,7 +39,7 @@ pub fn run(flags: Flags) -> Result<(), ()> {
 
     let _programs: Vec<_> = sources
         .iter()
-        .map(|program| drive_parser::<_, etac_parse::InterfaceParser>(&flags, &mut cache, &logger, program))
+        .map(|program| drive_parser::<_, etac_parse::ProgramParser>(&flags, &mut cache, &logger, program))
         .collect::<Result<_, _>>()?;
 
     Ok(())
