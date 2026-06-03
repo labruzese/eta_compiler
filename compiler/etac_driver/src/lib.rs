@@ -106,7 +106,7 @@ where
             if parse_logging {
                 parse_fatal_cb(logger, cache, file_id, &diags)?;
             }
-            for d in dbg!(diags) {
+            for d in diags {
                 emit(cache, d)
             }
             Err(())
