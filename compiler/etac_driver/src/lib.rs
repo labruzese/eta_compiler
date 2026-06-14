@@ -3,7 +3,7 @@
 //! Is responsible for passing input between each phase and attaching the
 //! --lex, --parse, etc. loggers to each phase.
 
-use etac_errors::{Diagnostic, Level, emit, error};
+use etac_errors::{emit, error, Diagnostic, Level};
 use etac_lexer::Token;
 use etac_parse::ParseResult;
 use etac_session::{cli::Flags, logger::Logger};
@@ -32,20 +32,28 @@ pub fn run(flags: Flags) -> Result<(), ()> {
 
     let logger = Logger::new(&flags);
 
+    let _programs: Vec<_> = sources
+        .iter()
+        .map(|program| {
+            drive_parser::<_, etac_parse::ProgramParser>(&flags, &mut cache, &logger, program).inspect(
+                |etac_ast::Program { uses, definitions: _ }| {
+                    for u in uses {
+                        interfaces.push(InterfaceId::new(u.id.sym.as_str()))
+                    }
+                },
+            )
+        })
+        .collect::<Result<_, _>>()?;
+
     let _interfaces: Vec<_> = interfaces
         .iter()
         .map(|interface| drive_parser::<_, etac_parse::InterfaceParser>(&flags, &mut cache, &logger, interface))
         .collect::<Result<_, _>>()?;
 
-    let _programs: Vec<_> = sources
-        .iter()
-        .map(|program| drive_parser::<_, etac_parse::ProgramParser>(&flags, &mut cache, &logger, program))
-        .collect::<Result<_, _>>()?;
-
     Ok(())
 }
 
-/// Helper to drive a specific a parser. 
+/// Helper to drive a specific a parser.
 fn drive_parser<Out, Parser>(
     flags: &Flags,
     cache: &mut SourceCache,
@@ -175,9 +183,7 @@ fn parse_fatal_cb(
 ) -> Result<(), ()> {
     let diag = diags.iter().find(|d| d.level == Level::Error).unwrap();
     let loc = cache
-        .lc_index(
-            diag.loc.as_ref().expect("syntactic error must have location").lo,
-        )
+        .lc_index(diag.loc.as_ref().expect("syntactic error must have location").lo)
         .map_err(|e| emit(cache, e.into()))?;
     logger
         .log_syntactic_error(&file_id, loc, &diag.message)

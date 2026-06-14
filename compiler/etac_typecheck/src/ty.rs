@@ -22,3 +22,15 @@ pub enum TyCtx {
     Ret(TupleTy),
     Fn { from: TupleTy, to: TupleTy },
 }
+
+// --- Conversions ---
+impl From<&etac_ast::TypeKind> for CoreTy {
+    fn from(value: &etac_ast::TypeKind) -> Self {
+        match value {
+            etac_ast::TypeKind::UnsizedArray { of } |
+            etac_ast::TypeKind::SizedArray { of, size: _ } => CoreTy::Array(Box::new(CoreTy::from(&of.kind))),
+            etac_ast::TypeKind::Int => CoreTy::Int,
+            etac_ast::TypeKind::Bool => CoreTy::Bool,
+        }
+    }
+}
