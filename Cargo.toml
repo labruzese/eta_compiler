@@ -22,6 +22,9 @@ pretty          = "0.12"
 similar-asserts = "2"
 unicode-width   = "0.2"
 tempfile 	= "3.27.0"
+getset 		= "0.1.7"
+derive-new	= "0.7.0"
+comemo 		= "0.5.1"
 
 # internal
 etac_ast      = { path = "compiler/etac_ast" }
@@ -34,3 +37,4 @@ etac_span     = { path = "compiler/etac_span" }
 
 generate_tests 		= { path = "proc_macros/generate_tests" }
 etac_derive_spanned 	= { path = "proc_macros/etac_derive_spanned" }
+etac_derive_nodeid 	= { path = "proc_macros/etac_derive_nodeid" }

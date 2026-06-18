@@ -97,7 +97,7 @@ Ident: Ident = <l:@L> <s:"ident"> <r:@R> => Ident { span: Span::new(l, r), sym: 
 // ---- Top Level ----
 
 pub Program: Program = {
-    <uses:UseList> <definitions:Definition+> => Program { uses, definitions },
+    <uses:UseList> <definitions:Definition+> => Program::new(uses, definitions),
     <uses:UseList> <r:@R> =>? Err(
 	error!(Span::new(r, r); "Program must contain at least one definition")
 	    .with_primary_label("expected definition")
@@ -106,7 +106,7 @@ pub Program: Program = {
 }
 
 pub Interface: Interface = {
-    <items:InterfaceItem+> => Interface { items },
+    <items:InterfaceItem+> => Interface::new(items),
     <r:@R> =>? Err(
 	error!(Span::new(r, r); "Interface must contain at least one method declaration")
 	    .with_primary_label("expected declaration")
@@ -115,16 +115,16 @@ pub Interface: Interface = {
 }
 
 InterfaceItem: InterfaceItem = {
-    <md:MethodDecl> => InterfaceItem { 
-	span: md.span,
-	kind: InterfaceItemKind::Decl(md) 
-    },
+    <md:MethodDecl> => InterfaceItem::new( 
+	md.span,
+	InterfaceItemKind::Decl(md) 
+    ),
     <l:@L> <e:!> <r:@R> => { 
 	errors.push(e); 
-	InterfaceItem { 
+	InterfaceItem::new( 
 	    span: Span::new(l, r),
 	    kind: InterfaceItemKind::Error
-	} 
+	) 
     }
 }
 

@@ -10,6 +10,10 @@
 
 use etac_span::Span;
 use etac_derive_spanned::Spanned;
+use etac_derive_nodeid::NodeId;
+use getset::Getters;
+use derive_new::new;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 mod printer;
 
@@ -20,36 +24,63 @@ pub trait Spanned {
     fn span(&self) -> Span;
 }
 
+pub trait NodeId {
+    fn node_id(&self) -> u64 ;
+}
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+fn new_id() -> u64 {
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+
 // ---- Identifiers ----
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Ident {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub sym: Id,
 }
 
 // ---- Top level ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Getters, NodeId)]
+#[derive(new)]
 pub struct Program {
+    #[new(value = "new_id()")]
+    node_id: u64,
     pub uses: Vec<Use>,
     pub definitions: Vec<Definition>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Getters, NodeId)]
+#[derive(new)]
 pub struct Interface {
+    #[new(value = "new_id()")]
+    node_id: u64,
     pub items: Vec<InterfaceItem>,
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Use {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub id: Ident,
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Definition {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: DefinitionKind,
 }
 
@@ -60,9 +91,12 @@ pub enum DefinitionKind {
     Error,
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct InterfaceItem {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: InterfaceItemKind,
 }
 
@@ -74,34 +108,46 @@ pub enum InterfaceItemKind {
 
 // ---- Methods & globals ----
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct MethodDecl {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub id: Ident,
     pub params: Vec<Decl>,
     pub ret_types: Vec<Type>,
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Method {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub id: Ident,
     pub params: Vec<Decl>,
     pub ret_types: Vec<Type>,
     pub body: Block,
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct GlobDecl {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub id: Ident,
     pub typ: Type,
     pub val: Option<Value>,
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Value {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: ValueKind,
 }
 
@@ -111,18 +157,24 @@ pub enum ValueKind {
     Bool(bool),
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Decl {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub id: Ident,
     pub typ: Type,
 }
 
 // ---- Types ----
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Type {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: TypeKind,
 }
 
@@ -136,15 +188,21 @@ pub enum TypeKind {
 
 // ---- Blocks & statements ----
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Block {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Stmt {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: StmtKind,
 }
 
@@ -162,9 +220,12 @@ pub enum StmtKind {
 
 // ---- Targets & lvalues ----
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Target {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: TargetKind,
 }
 
@@ -178,13 +239,16 @@ pub enum TargetKind {
 impl Target {
     /// Wrap a declaration as an assignment target, inheriting its span.
     pub fn from_decl(d: Decl) -> Target {
-        Target { span: d.span, kind: TargetKind::Decl(d) }
+        Target::new(d.span, TargetKind::Decl(d))
     }
 }
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct LValue {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: LValueKind,
 }
 
@@ -197,18 +261,24 @@ pub enum LValueKind {
 
 // ---- Calls ----
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct ProcCall {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub id: Ident,
     pub args: Vec<Expr>,
 }
 
 // ---- Expressions ----
 
-#[derive(Debug, Clone, Spanned)]
+#[derive(Debug, Clone, Getters, NodeId, Spanned)]
+#[derive(new)]
 pub struct Expr {
-    pub span: Span,
+    #[new(value = "new_id()")]
+    node_id: u64,
+    span: Span,
     pub kind: ExprKind,
 }
 

@@ -5,6 +5,9 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+getset.workspace 		= true
+derive-new.workspace	 	= true
 etac_derive_spanned.workspace 	= true
+etac_derive_nodeid.workspace 	= true
 etac_span.workspace 		= true
 pretty.workspace    		= true
