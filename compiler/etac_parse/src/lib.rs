@@ -1,18 +1,35 @@
+use etac_ast::{Expr, ExprKind, LValue, LValueKind, NodeIdGen};
 use etac_errors::{error, DiagCtxt, Diagnostic, ErrorGuaranteed};
-use etac_lexer::{Token};
+use etac_lexer::Token;
 use etac_span::Span;
-use lalrpop_util::{lalrpop_mod, ParseError};
+use lalrpop_util::{lalrpop_mod, ErrorRecovery, ParseError};
 
 lalrpop_mod!(grammar);
 
 mod tests;
+
+/// Mutable state threaded through every grammar action.
+///
+/// Bundles the [`NodeIdGen`] that hands out node ids with the buffer lalrpop fills
+/// on error recovery, so the grammar carries a single parameter instead of two.
+#[derive(Default)]
+pub struct ParseState {
+    pub ids: NodeIdGen,
+    pub errors: Vec<ErrorRecovery<usize, Token, Diagnostic>>,
+}
+
+impl ParseState {
+    pub fn new() -> Self {
+        ParseState::default()
+    }
+}
 
 pub trait IParser<ParseOut> {
     fn new() -> Self;
 
     fn parse<__TOKEN, __TOKENS>(
         &self,
-        errors: &mut Vec<lalrpop_util::ErrorRecovery<usize, Token, Diagnostic>>,
+        state: &mut ParseState,
         __tokens0: __TOKENS,
     ) -> Result<ParseOut, lalrpop_util::ParseError<usize, Token, Diagnostic>>
     where
@@ -27,13 +44,13 @@ macro_rules! impl_iparser {
 
             fn parse<__TOKEN, __TOKENS>(
                 &self,
-                errors: &mut Vec<lalrpop_util::ErrorRecovery<usize, Token, Diagnostic>>,
+                state: &mut ParseState,
                 __tokens0: __TOKENS,
             ) -> Result<$out, lalrpop_util::ParseError<usize, Token, Diagnostic>>
             where
                 __TOKEN: grammar::__ToTriple,
                 __TOKENS: IntoIterator<Item = __TOKEN> {
-                <$parser>::parse(self, errors, __tokens0)
+                <$parser>::parse(self, state, __tokens0)
             }
         }
     };
@@ -105,13 +122,13 @@ where
     Lexer: Iterator<Item = Result<(usize, Token, usize), Diagnostic>>,
     Parser: IParser<Out>,
 {
-    let mut recovered = Vec::new();
-    let result = Parser::new().parse(&mut recovered, lexer).map_err(to_diag);
+    let mut state = ParseState::new();
+    let result = Parser::new().parse(&mut state, lexer).map_err(to_diag);
 
     // Emit each recovered (non-fatal) error immediately, in source order, and remember
     // the first for logging.
     let mut first_error: Option<(Diagnostic, ErrorGuaranteed)> = None;
-    for r in recovered {
+    for r in state.errors {
         let diag = to_diag(r.error);
         let recorded = diag.clone();
         let guar = dcx.emit(diag).expect("syntax errors are always Level::Error");
@@ -130,6 +147,19 @@ where
             Parsed::Failed { first_error, guar }
         }
     }
+}
+
+/// Reinterpret a parsed [`LValue`] as the equivalent [`Expr`], minting fresh ids for
+/// the rebuilt carrier. The AST models the array operand of an indexed lvalue
+/// (`a[i]`) as an `Expr`, so the grammar funnels the accumulated base through here
+/// when folding postfix `[..]` groups.
+pub(crate) fn lvalue_to_expr(lv: LValue, ids: &mut NodeIdGen) -> Expr {
+    let kind = match lv.kind {
+        LValueKind::Id(id) => ExprKind::Id(id),
+        LValueKind::ProcCall(pc) => ExprKind::Call(pc),
+        LValueKind::Index { array, index } => ExprKind::Index { array, index },
+    };
+    Expr::new(ids.fresh(), lv.span, kind)
 }
 
 fn to_diag(err: ParseError<usize, Token, Diagnostic>) -> Diagnostic {

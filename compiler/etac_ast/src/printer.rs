@@ -1,4 +1,5 @@
-// Module for printing the ast
+//! S-expression `Display` for the AST. The exact shape here is relied on by
+//! parser tests, so keep node renderings stable.
 
 use super::*;
 use pretty::{Doc, RcDoc};
@@ -84,7 +85,7 @@ impl ToDoc for InterfaceItem {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match &self.kind {
             InterfaceItemKind::Decl(d) => d.to_doc(),
-            InterfaceItemKind::Error => d!("Error"),
+            InterfaceItemKind::Error(_) => d!("Error"),
         }
     }
 }
@@ -100,7 +101,7 @@ impl ToDoc for Definition {
         match &self.kind {
             DefinitionKind::Method(m) => m.to_doc(),
             DefinitionKind::GlobDecl(g) => g.to_doc(),
-            DefinitionKind::Error => d!("Error"),
+            DefinitionKind::Error(_) => d!("Error"),
         }
     }
 }
@@ -150,8 +151,8 @@ impl ToDoc for Decl {
 impl ToDoc for Type {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match &self.kind {
-            TypeKind::SizedArray { of, size } => parens([d!("[]"), of.to_doc(), size.to_doc()]),
-            TypeKind::UnsizedArray { of } => parens([d!("[]"), of.to_doc()]),
+            TypeKind::Array { of, size: Some(size) } => parens([d!("[]"), of.to_doc(), size.to_doc()]),
+            TypeKind::Array { of, size: None } => parens([d!("[]"), of.to_doc()]),
             TypeKind::Int => d!("int"),
             TypeKind::Bool => d!("bool"),
         }
@@ -193,17 +194,17 @@ impl ToDoc for Stmt {
             StmtKind::Call(p) => p.to_doc(),
             StmtKind::Block(b) => b.to_doc(),
             StmtKind::Decls(decls) => RcDoc::intersperse(docs!(decls), Doc::line()).group(),
-            StmtKind::Error => d!("Error"),
+            StmtKind::Error(_) => d!("Error"),
         }
     }
 }
 
 impl ToDoc for Target {
     fn to_doc(&self) -> RcDoc<'static, ()> {
-        match &self.kind {
-            TargetKind::LValue(v) => v.to_doc(),
-            TargetKind::Decl(d_) => d_.to_doc(),
-            TargetKind::Discard => d!("_"),
+        match self {
+            Target::LValue(v) => v.to_doc(),
+            Target::Decl(d_) => d_.to_doc(),
+            Target::Discard(_) => d!("_"),
         }
     }
 }
@@ -211,7 +212,7 @@ impl ToDoc for Target {
 impl ToDoc for LValue {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match &self.kind {
-            LValueKind::Index { of, index } => parens([d!("[]"), of.to_doc(), index.to_doc()]),
+            LValueKind::Index { array, index } => parens([d!("[]"), array.to_doc(), index.to_doc()]),
             LValueKind::Id(id) => d!(@id),
             LValueKind::ProcCall(pc) => pc.to_doc(),
         }
@@ -234,9 +235,9 @@ impl ToDoc for Expr {
             ExprKind::Index { array, index } => parens([d!("[]"), array.to_doc(), index.to_doc()]),
             ExprKind::Call(pc) => pc.to_doc(),
             ExprKind::Length(e) => parens([d!("length"), e.to_doc()]),
-            ExprKind::Unary { op, operand, .. } => parens([d!(@op), operand.to_doc()]),
-            ExprKind::Binary { op, lhs, rhs, .. } => parens([d!(@op), lhs.to_doc(), rhs.to_doc()]),
-            ExprKind::Error => d!("Error"),
+            ExprKind::Unary { op, operand } => parens([d!(@op.node), operand.to_doc()]),
+            ExprKind::Binary { op, lhs, rhs } => parens([d!(@op.node), lhs.to_doc(), rhs.to_doc()]),
+            ExprKind::Error(_) => d!("Error"),
         }
     }
 }
@@ -263,30 +264,12 @@ impl ToDoc for ArrLit {
 
 impl fmt::Display for UOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            UOp::Neg => "-",
-            UOp::Not => "!",
-        })
+        f.write_str(self.as_str())
     }
 }
 
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            BinOp::Add => "+",
-            BinOp::Sub => "-",
-            BinOp::Mul => "*",
-            BinOp::HighMul => "*>>",
-            BinOp::Div => "/",
-            BinOp::Mod => "%",
-            BinOp::Eq => "==",
-            BinOp::Neq => "!=",
-            BinOp::Lt => "<",
-            BinOp::Gt => ">",
-            BinOp::Le => "<=",
-            BinOp::Ge => ">=",
-            BinOp::And => "&",
-            BinOp::Or => "|",
-        })
+        f.write_str(self.as_str())
     }
 }

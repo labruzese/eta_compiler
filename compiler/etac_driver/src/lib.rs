@@ -18,7 +18,7 @@ use etac_span::{FileId, InterfaceId, SourceCache, SourceId};
 /// that indicates whether or not the program was able to compile
 pub fn run(flags: Flags) -> Result<(), ()> {
     let cache = SourceCache::new();
-    // The only diagnostic context. Borrows `cache` (interior-mutable) so it can
+    // The one and only diagnostic context. Borrows `cache` (interior-mutable) so it can
     // render spans; every phase below reports through it.
     let dcx = DiagCtxt::new(&cache);
 
