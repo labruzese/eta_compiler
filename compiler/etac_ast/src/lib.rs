@@ -1,306 +1,358 @@
-//! Abstract syntax tree.
+//! Abstract syntax tree for the Eta language.
 //!
-//! Span placement: every node is *either* a struct with its own
-//! `span: Span` field, *or* an enum of the form `Foo { span, kind: FooKind }`.
-//! So `node.span` is always available — including the `Error` recovery variants.
-//! Small payloads are inlined as struct-variants (`ExprKind::Binary { .. }`),
-//! so the only struct types left are genuine nodes. The two types that *only*
-//! ever appear inside a spanned `Expr` (`Lit`, `ArrLit`) are deliberately
-//! span-free and inherit their location from the enclosing `Expr`.
+//!  * Carrier / Kind split: `Expr` { node_id, span, kind: ExprKind }, etc.
+//!    The carrier struct owns identity (node_id) and location (span); the
+//!    `*Kind` enum owns the shape. Carriers get ids; leaf kinds do not.
+//!  * `Spanned<T>` wraps small things that need a location but don't earn a
+//!    full node (operators, etc.) instead of a parallel `_span` field.
+//!  * `Error` variants carry an `ErrorGuaranteed`, so an error node can only be
+//!    built once a diagnostic for it is guaranteed to reach the user.
+//!  * Plain `pub` fields, not accessors — the AST exists to be taken apart.
+//!  * Node ids are handed out by a `NodeIdGen` threaded through the parser
+//!    (deterministic, resettable), not a process-global atomic.
 
 use etac_span::Span;
-use etac_derive_spanned::Spanned;
-use etac_derive_nodeid::NodeId;
-use getset::Getters;
-use derive_new::new;
-use std::sync::atomic::{AtomicU64, Ordering};
+use etac_errors::ErrorGuaranteed;
 
 mod printer;
 
-pub type Id = String;
+// ---- Core ids and spans ----
+
+/// Stable identifier for a node. Assigned by `NodeIdGen`, not by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeId(u32);
+
+impl NodeId {
+    /// Placeholder for synthesized nodes before real ids are assigned.
+    pub const DUMMY: NodeId = NodeId(u32::MAX);
+
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
+/// Hands out fresh node ids. Thread one through the parser and call `fresh()`.
+/// Reset between compilations / tests by constructing a new one.
+#[derive(Debug, Default)]
+pub struct NodeIdGen {
+    next: u32,
+}
+
+impl NodeIdGen {
+    pub fn new() -> Self {
+        NodeIdGen { next: 0 }
+    }
+
+    pub fn fresh(&mut self) -> NodeId {
+        let id = NodeId(self.next);
+        self.next += 1;
+        id
+    }
+}
 
 /// Uniform span access for any node that carries one.
-pub trait Spanned {
+pub trait HasSpan {
     fn span(&self) -> Span;
 }
 
-pub trait NodeId {
-    fn node_id(&self) -> u64 ;
+/// Uniform id access for any carrier node.
+pub trait HasNodeId {
+    fn node_id(&self) -> NodeId;
 }
 
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
-#[inline]
-fn new_id() -> u64 {
-    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+/// A `T` paired with a source location, for leaves too small to be full nodes.
+#[derive(Debug, Clone, Copy)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub span: Span,
 }
 
+pub fn respan<T>(span: Span, node: T) -> Spanned<T> {
+    Spanned { node, span }
+}
+
+impl<T> HasSpan for Spanned<T> {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+// ---- Node macros ----
+
+/// A `*Kind`-style enum: shape only, no identity or location.
+macro_rules! opaque {
+    ($(#[$meta:meta])* $name:ident { $($body:tt)* }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone)]
+        pub enum $name {
+            $($body)*
+        }
+    };
+}
+
+/// A carrier struct: owns `node_id` + `span`, plus public fields.
+/// `new` takes the id explicitly (get it from `NodeIdGen::fresh`).
+macro_rules! concrete {
+    ($(#[$meta:meta])* $name:ident { $($field:ident : $type:ty),* $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            pub node_id: NodeId,
+            pub span: Span,
+            $(pub $field: $type,)*
+        }
+
+        impl HasSpan for $name {
+            fn span(&self) -> Span {
+                self.span
+            }
+        }
+
+        impl HasNodeId for $name {
+            fn node_id(&self) -> NodeId {
+                self.node_id
+            }
+        }
+
+        impl $name {
+            pub fn new(node_id: NodeId, span: Span, $($field: $type),*) -> Self {
+                $name { node_id, span, $($field),* }
+            }
+        }
+    };
+}
 
 // ---- Identifiers ----
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Ident {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub sym: Id,
+concrete! {
+    Ident {
+        sym: String
+    }
 }
 
 // ---- Top level ----
 
-#[derive(Debug, Clone, Getters, NodeId)]
-#[derive(new)]
-pub struct Program {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    pub uses: Vec<Use>,
-    pub definitions: Vec<Definition>,
+concrete! {
+    Program {
+        uses: Vec<Use>,
+        definitions: Vec<Definition>
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId)]
-#[derive(new)]
-pub struct Interface {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    pub items: Vec<InterfaceItem>,
+concrete! {
+    Interface {
+        items: Vec<InterfaceItem>
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Use {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub id: Ident,
+concrete! {
+    Use {
+        id: Ident
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Definition {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: DefinitionKind,
+concrete! {
+    Definition {
+        kind: DefinitionKind
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum DefinitionKind {
-    Method(Method),
-    GlobDecl(GlobDecl),
-    Error,
+opaque! {
+    DefinitionKind {
+        Method(Method),
+        GlobDecl(GlobDecl),
+        Error(ErrorGuaranteed),
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct InterfaceItem {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: InterfaceItemKind,
+concrete! {
+    InterfaceItem {
+        kind: InterfaceItemKind
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum InterfaceItemKind {
-    Decl(MethodDecl),
-    Error,
+opaque! {
+    InterfaceItemKind {
+        Decl(MethodDecl),
+        Error(ErrorGuaranteed),
+    }
 }
 
 // ---- Methods & globals ----
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct MethodDecl {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub id: Ident,
-    pub params: Vec<Decl>,
-    pub ret_types: Vec<Type>,
+concrete! {
+    MethodDecl {
+        id: Ident,
+        params: Vec<Decl>,
+        ret_types: Vec<Type>
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Method {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub id: Ident,
-    pub params: Vec<Decl>,
-    pub ret_types: Vec<Type>,
-    pub body: Block,
+concrete! {
+    Method {
+        id: Ident,
+        params: Vec<Decl>,
+        ret_types: Vec<Type>,
+        body: Block
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct GlobDecl {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub id: Ident,
-    pub typ: Type,
-    pub val: Option<Value>,
+concrete! {
+    GlobDecl {
+        id: Ident,
+        typ: Type,
+        val: Option<Value>
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Value {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: ValueKind,
+// NOTE: `Value` overlaps `Lit::{Int, Bool}`. It exists because a global
+// initializer is a *constant*, not an arbitrary expression. If you'd rather not
+// maintain two literal representations, drop `Value`/`ValueKind`, make this
+// `val: Option<Lit>`, and enforce constness in the type checker.
+concrete! {
+    Value {
+        kind: ValueKind
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum ValueKind {
-    Int(i128),
-    Bool(bool),
+opaque! {
+    ValueKind {
+        Int(i128),
+        Bool(bool),
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Decl {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub id: Ident,
-    pub typ: Type,
+concrete! {
+    Decl {
+        id: Ident,
+        typ: Type
+    }
 }
 
 // ---- Types ----
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Type {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: TypeKind,
+concrete! {
+    Type {
+        kind: TypeKind
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum TypeKind {
-    SizedArray { of: Box<Type>, size: Box<Expr> },
-    UnsizedArray { of: Box<Type> },
-    Int,
-    Bool,
+opaque! {
+    TypeKind {
+        Array { of: Box<Type>, size: Option<Box<Expr>> },
+        Int,
+        Bool,
+    }
+}
+
+impl TypeKind {
+    pub fn is_array(&self) -> bool {
+        matches!(self, TypeKind::Array { .. })
+    }
 }
 
 // ---- Blocks & statements ----
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Block {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub stmts: Vec<Stmt>,
+concrete! {
+    Block {
+        stmts: Vec<Stmt>
+    }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Stmt {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: StmtKind,
+concrete! {
+    Stmt {
+        kind: StmtKind
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum StmtKind {
-    Assign { targets: Vec<Target>, values: Vec<Expr> },
-    If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
-    While { cond: Expr, body: Box<Stmt> },
-    Return { values: Vec<Expr> },
-    Call(ProcCall),
-    Block(Block),
-    Decls(Vec<Decl>),
-    Error,
+opaque! {
+    StmtKind {
+        Assign { targets: Vec<Target>, values: Vec<Expr> },
+        If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
+        While { cond: Expr, body: Box<Stmt> },
+        Return { values: Vec<Expr> },
+        Call(ProcCall),
+        Block(Block),
+        Decls(Vec<Decl>),
+        Error(ErrorGuaranteed),
+    }
 }
 
 // ---- Targets & lvalues ----
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Target {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: TargetKind,
-}
-
-#[derive(Debug, Clone)]
-pub enum TargetKind {
-    LValue(LValue),
-    Decl(Decl),
-    Discard,
-}
-
-impl Target {
-    /// Wrap a declaration as an assignment target, inheriting its span.
-    pub fn from_decl(d: Decl) -> Target {
-        Target::new(d.span, TargetKind::Decl(d))
+// `Target` has no node_id/span of its own; its payload carries one (except
+// `Discard`). If you need to point a diagnostic at `_` specifically, promote
+// this to a `concrete!` node or wrap it in `Spanned`.
+opaque! {
+    Target {
+        LValue(LValue),
+        Decl(Decl),
+        Discard(Spanned<()>),
     }
 }
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct LValue {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: LValueKind,
+concrete! {
+    LValue {
+        kind: LValueKind
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum LValueKind {
-    Index { of: Box<LValue>, index: Box<Expr> },
-    Id(Ident),
-    ProcCall(ProcCall),
+opaque! {
+    LValueKind {
+        Id(Ident),
+        ProcCall(ProcCall),
+        Index { array: Box<Expr>, index: Box<Expr> },
+    }
 }
 
 // ---- Calls ----
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct ProcCall {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub id: Ident,
-    pub args: Vec<Expr>,
+concrete! {
+    ProcCall {
+        id: Ident,
+        args: Vec<Expr>
+    }
 }
 
 // ---- Expressions ----
 
-#[derive(Debug, Clone, Getters, NodeId, Spanned)]
-#[derive(new)]
-pub struct Expr {
-    #[new(value = "new_id()")]
-    node_id: u64,
-    span: Span,
-    pub kind: ExprKind,
+concrete! {
+    Expr {
+        kind: ExprKind
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum ExprKind {
-    Id(Ident),
-    Lit(Lit),
-    Index { array: Box<Expr>, index: Box<Expr> },
-    Call(ProcCall),
-    Length(Box<Expr>),
-    Unary { op: UOp, op_span: Span, operand: Box<Expr> },
-    Binary { op: BinOp, op_span: Span, lhs: Box<Expr>, rhs: Box<Expr> },
-    Error,
+opaque! {
+    ExprKind {
+        Id(Ident),
+        Lit(Lit),
+        Index { array: Box<Expr>, index: Box<Expr> },
+        Call(ProcCall),
+        Length(Box<Expr>),
+        Unary { op: Spanned<UOp>, operand: Box<Expr> },
+        Binary { op: Spanned<BinOp>, lhs: Box<Expr>, rhs: Box<Expr> },
+        Error(ErrorGuaranteed),
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
+// ---- Operators ----
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UOp {
     Neg,
     Not,
 }
 
-#[derive(Debug, Clone, Copy)]
+impl UOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UOp::Neg => "-",
+            UOp::Not => "!",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -316,6 +368,51 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+}
+
+impl BinOp {
+    pub fn as_str(self) -> &'static str {
+        use BinOp::*;
+        match self {
+            Add => "+",
+            Sub => "-",
+            Mul => "*",
+            HighMul => "*>>",
+            Div => "/",
+            Mod => "%",
+            Eq => "==",
+            Neq => "!=",
+            Lt => "<",
+            Gt => ">",
+            Le => "<=",
+            Ge => ">=",
+            And => "&",
+            Or => "|",
+        }
+    }
+
+    /// Higher binds tighter.
+    pub fn precedence(self) -> u8 {
+        use BinOp::*;
+        match self {
+            Or => 1,
+            And => 2,
+            Eq | Neq => 3,
+            Lt | Le | Gt | Ge => 4,
+            Add | Sub => 5,
+            Mul | Div | Mod | HighMul => 6,
+        }
+    }
+
+    pub fn is_comparison(self) -> bool {
+        use BinOp::*;
+        matches!(self, Eq | Neq | Lt | Gt | Le | Ge)
+    }
+
+    /// `&` and `|` short-circuit
+    pub fn is_short_circuit(self) -> bool {
+        matches!(self, BinOp::And | BinOp::Or)
+    }
 }
 
 // ---- Literals (span-free; inherit from the enclosing Expr) ----
