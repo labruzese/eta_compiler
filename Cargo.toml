@@ -36,5 +36,3 @@ etac_session  = { path = "compiler/etac_session" }
 etac_span     = { path = "compiler/etac_span" }
 
 generate_tests 		= { path = "proc_macros/generate_tests" }
-etac_derive_spanned 	= { path = "proc_macros/etac_derive_spanned" }
-etac_derive_nodeid 	= { path = "proc_macros/etac_derive_nodeid" }

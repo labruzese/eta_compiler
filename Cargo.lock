@@ -336,22 +336,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "etac_derive_nodeid"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn",
-]
-
-[[package]]
-name = "etac_derive_spanned"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn",
-]
-
-[[package]]
 name = "etac_driver"
 version = "0.1.0"
 dependencies = [
