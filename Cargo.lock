@@ -415,6 +415,8 @@ name = "etac_session"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "etac_errors",
+ "etac_lexer",
  "etac_span",
 ]
 

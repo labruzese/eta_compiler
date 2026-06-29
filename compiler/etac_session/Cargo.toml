@@ -5,5 +5,7 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-etac_span.workspace = true
-clap.workspace      = true
+etac_errors.workspace = true
+etac_lexer.workspace  = true
+etac_span.workspace   = true
+clap.workspace        = true
