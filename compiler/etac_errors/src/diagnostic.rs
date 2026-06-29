@@ -1,4 +1,4 @@
-use super::*;
+use super::{Level, Span, Color};
 
 #[derive(Debug, Clone, PartialEq)]
 /// Represents an emittable compiler diagnostic, usually these diagnostics have a location but
@@ -40,6 +40,7 @@ impl Diagnostic {
     }
 
     /// Attach code to this diagnostic
+    #[must_use = "diag is consumed before emission here"]
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
         self.code = Some(code.into());
         self
@@ -48,10 +49,12 @@ impl Diagnostic {
     /// Attach a primary label to this diagnostic. This attaches the message as context pointing to 
     /// the span of the diagnostics location. This function *panics* if it is attached to a 
     /// diagnostic without a location.
+    /// # Panics
+    /// If this diagnostic does not have a location to attach a primary label to
+    #[must_use = "diag is consumed before emission here"]
     pub fn with_primary_label(mut self, message: impl Into<String>) -> Self {
         self.labels.push((
             self.loc
-                .clone()
                 .unwrap_or_else(|| panic!("can not add primary label to a diagnostic without a location")),
             message.into(),
             Color::Red,
@@ -60,12 +63,14 @@ impl Diagnostic {
     }
 
     /// Attach a label at a different location to this diagnostic.
+    #[must_use = "diag is consumed before emission here"]
     pub fn with_secondary_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.labels.push((span, message.into(), Color::Yellow));
         self
     }
 
     /// Attach a note about this diagnostic or about the problem to this diagnostic.
+    #[must_use = "diag is consumed before emission here"]
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = Some(note.into());
         self

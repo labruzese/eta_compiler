@@ -17,7 +17,7 @@ use ariadne::Color;
 use etac_span::Span;
 
 #[macro_export]
-/// Creates a new Level::Error Diagnostic with a provided message.
+/// Creates a new `Level::Error` Diagnostic with a provided message.
 /// Note the syntax is to have a semicolon (`;`) after the span.
 /// `error!(span; "no identifier called {}", id)` => Diagnostic with span
 /// `error!("file does not exist")` => Diagnostic *without* a span

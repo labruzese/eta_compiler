@@ -35,37 +35,34 @@ impl Emitter for HumanEmitter {
             Level::Note => ReportKind::Advice,
         };
 
-        match diag.loc {
-            Some(loc) => {
-                let floc = sources.resolve(loc);
-                let mut b = Report::build(kind, floc).with_message(diag.message);
-                if let Some(c) = diag.code {
-                    b = b.with_code(c);
-                }
-                if let Some(n) = diag.note {
-                    b = b.with_note(n);
-                }
-                for (span, msg, color) in diag.labels {
-                    let fspan = sources.resolve(span);
-                    b = b.with_label(Label::new(fspan).with_message(msg).with_color(color));
-                }
-                // `cache_view()` borrows `sources` immutably; see SourceCache::cache_view.
-                let _ = b.finish().eprint(sources.cache_view());
+        if let Some(loc) = diag.loc {
+            let floc = sources.resolve(loc);
+            let mut b = Report::build(kind, floc).with_message(diag.message);
+            if let Some(c) = diag.code {
+                b = b.with_code(c);
             }
-            None => {
-                static NO_SPAN: NoSpan = NoSpan;
-                let mut b = Report::build(kind, NO_SPAN).with_message(diag.message);
-                if let Some(c) = diag.code {
-                    b = b.with_code(c);
-                }
-                if let Some(n) = diag.note {
-                    b = b.with_note(n);
-                }
-                for (_span, msg, color) in diag.labels {
-                    b = b.with_label(Label::new(NO_SPAN).with_message(msg).with_color(color));
-                }
-                let _ = b.finish().eprint(NoCache);
+            if let Some(n) = diag.note {
+                b = b.with_note(n);
             }
+            for (span, msg, color) in diag.labels {
+                let fspan = sources.resolve(span);
+                b = b.with_label(Label::new(fspan).with_message(msg).with_color(color));
+            }
+            // `cache_view()` borrows `sources` immutably; see SourceCache::cache_view.
+            let _ = b.finish().eprint(sources.cache_view());
+        } else {
+            static NO_SPAN: NoSpan = NoSpan;
+            let mut b = Report::build(kind, NO_SPAN).with_message(diag.message);
+            if let Some(c) = diag.code {
+                b = b.with_code(c);
+            }
+            if let Some(n) = diag.note {
+                b = b.with_note(n);
+            }
+            for (_span, msg, color) in diag.labels {
+                b = b.with_label(Label::new(NO_SPAN).with_message(msg).with_color(color));
+            }
+            let _ = b.finish().eprint(NoCache);
         }
     }
 }
@@ -79,20 +76,24 @@ impl Emitter for HumanEmitter {
 pub struct BufferEmitter(Rc<RefCell<Vec<Diagnostic>>>);
 
 impl BufferEmitter {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Drain everything emitted so far, leaving the buffer empty.
+    #[must_use]
     pub fn take(&self) -> Vec<Diagnostic> {
         std::mem::take(&mut self.0.borrow_mut())
     }
 
     /// Number of diagnostics currently buffered.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.borrow().len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.borrow().is_empty()
     }

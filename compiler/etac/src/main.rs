@@ -8,11 +8,15 @@ fn main() -> std::process::ExitCode {
     env_logger::init();
     match etac_driver::run(&etac_session::cli::parse_flags()) {
         Ok(CompilationSuccess { warnings }) => {
-            println!("{ANSI_BOLD_GREEN}Compiled with {warnings} warnings");
+            if cfg!(not(test)) {
+                println!("{ANSI_BOLD_GREEN}Compiled with {warnings} warnings");
+            }
             std::process::ExitCode::SUCCESS
         }
         Err(CompilationFailure { errors, warnings }) => {
-            println!("{ANSI_BOLD_RED}Compilation failed with {errors} errors and {warnings} warnings{ANSI_RESET}");
+            if cfg!(not(test)) {
+                println!("{ANSI_BOLD_RED}Compilation failed with {errors} errors and {warnings} warnings{ANSI_RESET}");
+            }
             std::process::ExitCode::FAILURE
         }
     }

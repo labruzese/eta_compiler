@@ -45,6 +45,7 @@ impl ErrorGuaranteed {
     /// check across an API boundary). Misuse reintroduces exactly the silent-failure
     /// class this type exists to prevent.
     #[inline]
+    #[must_use]
     pub fn claim_already_emitted() -> Self {
         ErrorGuaranteed(())
     }
@@ -184,6 +185,8 @@ impl<'dcx, 'src> Diag<'dcx, 'src> {
     }
 
     /// Emit through the context. Returns proof iff this was an error.
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn emit(mut self) -> Option<ErrorGuaranteed> {
         let d = self.diag.take().expect("Diag already consumed");
         self.dcx.emit(d)
@@ -196,14 +199,14 @@ impl<'dcx, 'src> Diag<'dcx, 'src> {
 }
 
 impl Drop for Diag<'_, '_> {
+    /// # Panics
+    ///
     fn drop(&mut self) {
         if let Some(diag) = self.diag.take() {
             // A diagnostic was built and then dropped on the floor. In debug that is a
             // bug worth surfacing loudly; in release we still emit it so the user is
             // never silently denied an error they should have seen.
-            if cfg!(debug_assertions) && !std::thread::panicking() {
-                panic!("Diag dropped without `.emit()`/`.cancel()`: {diag:?}");
-            }
+            debug_assert!(false, "Diag dropped without `.emit()`/`.cancel()`: {diag:?}");
             self.dcx.emit(diag);
         }
     }
