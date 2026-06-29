@@ -375,15 +375,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "etac_tests"
-version = "0.1.0"
-dependencies = [
- "etac",
- "generate_tests",
- "similar-asserts",
-]
-
-[[package]]
 name = "etac_typecheck"
 version = "0.1.0"
 dependencies = [

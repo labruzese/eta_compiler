@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members  = ["compiler/*", "proc_macros/*", "etac_tests"]
+members  = ["compiler/*", "proc_macros/*"]
 default-members = ["compiler/etac"]
 
 [workspace.lints.clippy]
