@@ -86,24 +86,24 @@ where
     };
 
     // Attach --lex logging in one line: a transparent pass-through unless --lex is set.
-    let mut lexer = logger.tee(file_id, cache, etac_lexer::Lexer::new(base, &source));
+    let mut lexer = logger.tee(*file_id, cache, etac_lexer::Lexer::new(base, &source));
 
     // The parser emits every diagnostic through `dcx` itself; here we only log the result
     // and pick a control-flow path from the outcome.
     match etac_parse::parse::<_, _, Parser>(dcx, &mut lexer) {
         Parsed::Ok(out) => {
-            logger.log_tree(file_id, &out);
+            logger.log_tree(*file_id, &out);
             Ok(out)
         }
         Parsed::Recovered { out, first_error, .. } => {
-            logger.log_syntax_error(file_id, cache, &first_error);
+            logger.log_syntax_error(*file_id, cache, &first_error);
             Ok(out)
         }
         Parsed::Failed { first_error, .. } => {
             // drain the lexer so the `.lexed` log still captures every token (and the
             // first lexical error) even though parsing stopped early
             lexer.for_each(drop);
-            logger.log_syntax_error(file_id, cache, &first_error);
+            logger.log_syntax_error(*file_id, cache, &first_error);
             Err(())
         }
     }
