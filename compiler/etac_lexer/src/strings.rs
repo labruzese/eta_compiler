@@ -1,4 +1,6 @@
-use super::{error, Span, Diagnostic, LogosLexer, global_span};
+use super::{error, global_span, Diagnostic, LogosLexer, Span};
+
+const VALID_ESCAPES: &str = "valid escapes: '\\n', '\\t', '\\r', '\\\\', '\\'', '\\\"', '\\0', '\\x{..}'";
 
 /// A cursor over the *inner* contents of a char/string literal (i.e. with the
 /// surrounding quotes already stripped). `pos` is tracked as an absolute byte
@@ -94,7 +96,9 @@ fn finish_char(cursor: &mut Cursor, start: usize) -> (char, usize) {
 fn parse_hex(cursor: &mut Cursor) -> Result<u32, Diagnostic> {
     let open = cursor.loc() - 2;
     if cursor.next() != Some(b'{') {
-        return Err(error!(Span::new(open, open); "expected '{{' after '\\x'").with_primary_label("at this escape sequence"));
+        return Err(
+            error!(Span::new(open, open+2); "expected '{{' after '\\x'").with_primary_label("at this escape sequence")
+        );
     }
 
     let mut value: u32 = 0;
@@ -104,7 +108,7 @@ fn parse_hex(cursor: &mut Cursor) -> Result<u32, Diagnostic> {
     // range) but want to keep consuming hex digits so the eventual error
     // span covers the *entire* run of digits the user typed, not just the
     // prefix up to the first offending digit.
-    let mut pending_error: Option<&'static str> = None;
+    let mut pending_error: Option<(&'static str, &'static str, &'static str)> = None;
 
     loop {
         match cursor.peek() {
@@ -114,11 +118,13 @@ fn parse_hex(cursor: &mut Cursor) -> Result<u32, Diagnostic> {
 
                 if digit_count == 0 {
                     // No digits between `{` and `}`.
-                    return Err(error!(Span::new(digits_start, close); "empty unicode escape expected non-empty hex between '{{' and '}}', e.g. '\\x{{41}}'").with_primary_label("expected non-empty hex here"));
+                    return Err(error!(Span::new(open, close); "empty unicode escape expected non-empty hex between '{{' and '}}'").with_primary_label("expected non-empty hex here"));
                 }
 
                 if let Some(msg) = pending_error {
-                    return Err(error!(Span::new(digits_start, close); "{}", msg).with_primary_label("inside this unicode escape sequence"));
+                    return Err(error!(Span::new(digits_start, close); "{}", msg.0)
+                        .with_primary_label(msg.1)
+                        .with_note(msg.2));
                 }
 
                 return Ok(value);
@@ -134,9 +140,9 @@ fn parse_hex(cursor: &mut Cursor) -> Result<u32, Diagnostic> {
                     // closing `}` so the reported span covers everything
                     // the user wrote.
                     pending_error.get_or_insert(
-                        "too many hex digits in unicode escape: at most 6 hex digits are \
-                         allowed between '{' and '}' (codepoints only go up to 10FFFF), \
-                         e.g. '\\x{10FFFF}'",
+                        ("too many hex digits in unicode escape",
+                        "too many hex digits here",
+                        "at most 6 hex digits are allowed between '{' and '}' (codepoints only go up to 10FFFF), e.g. '\\x{10FFFF}'"),
                     );
                     continue;
                 }
@@ -156,10 +162,11 @@ fn parse_hex(cursor: &mut Cursor) -> Result<u32, Diagnostic> {
                     // bailing immediately, so the span covers the whole
                     // digit run instead of stopping at the first digit
                     // that tipped it over.
-                    pending_error.get_or_insert(
-                        "unicode escape out of range: the maximum valid codepoint is \
-                         U+10FFFF, e.g. '\\x{10FFFF}' is the largest allowed value",
-                    );
+                    pending_error.get_or_insert((
+                        "unicode escape out of range",
+                        "this isn't a valid codepoint",
+                        "the maximum valid codepoint is U+10FFFF ('\\x{10FFFF}')",
+                    ));
                 }
             }
             Some(_) => {
@@ -172,9 +179,13 @@ fn parse_hex(cursor: &mut Cursor) -> Result<u32, Diagnostic> {
                 let (ch, end) = finish_char(cursor, start);
                 return Err(error!(
                     Span::new(start, end);
-                    "invalid hex digit '{}' in unicode escape: only the digits 0-9 and \
-                     letters a-f/A-F are allowed inside '\\x{{...}}'", ch
-                ).with_primary_label("inside this unicode escape"));
+                    "invalid hex digit '{}' in unicode escape: '", ch
+                )
+                .with_primary_label("inside this unicode escape")
+                .with_note(
+                    "only the digits 0-9 and \
+                     letters a-f/A-F are allowed inside '\\x{...}",
+                ));
             }
             None => {
                 // Ran off the end of the literal before finding a closing
@@ -185,9 +196,10 @@ fn parse_hex(cursor: &mut Cursor) -> Result<u32, Diagnostic> {
                 let end = cursor.loc();
                 return Err(error!(
                     Span::new(open, end);
-                    "unterminated unicode escape: expected a closing '}}' before the end \
-                     of the literal, e.g. '\\x{{41}}'"
-                ).with_primary_label("unicode escape unclosed here"));
+                    "unterminated unicode escape"
+                )
+                .with_primary_label("unicode escape unclosed here")
+                .with_note("expected a closing '}}' before the end of the literal"));
             }
         }
     }
@@ -201,7 +213,9 @@ fn decode_escape(cursor: &mut Cursor) -> Result<Spanned<Escape>, Diagnostic> {
 
     let b_pos = cursor.loc();
     let b = cursor.next().ok_or_else(|| {
-        error!(Span::new(esc_start, esc_start); "dangling backslash: expected an escape character after '\\'").with_primary_label("closing quote is escaped here")
+        error!(Span::new(esc_start, esc_start); "dangling backslash")
+            .with_primary_label("closing quote is escaped here")
+            .with_note("expected an escape character after '\\'")
     })?;
 
     let esc = match b {
@@ -226,12 +240,12 @@ fn decode_escape(cursor: &mut Cursor) -> Result<Spanned<Escape>, Diagnostic> {
             if (0xD800..=0xDFFF).contains(&cp) {
                 return Err(error!(
                     Span::new(esc_start, end);
-                    "invalid unicode escape: U+{:04X} is a UTF-16 surrogate half and \
-                     is not a valid Unicode scalar value; surrogate halves (U+D800–U+DFFF) \
-                     cannot be used in escape sequences",
-                    cp
+                    "invalid unicode escape",
                 )
-                .with_primary_label("this escape produces a surrogate half"));
+                .with_primary_label("this escape produces a surrogate half")
+                .with_note(format!("U+{cp:04X} is a UTF-16 surrogate half and \
+                     is not a valid Unicode scalar value; surrogate halves (U+D800–U+DFFF) \
+                     cannot be used in escape sequences")));
             }
 
             // char::from_u32 accepts all non-surrogate codepoints ≤
@@ -248,9 +262,10 @@ fn decode_escape(cursor: &mut Cursor) -> Result<Spanned<Escape>, Diagnostic> {
             let l = cursor.loc();
             return Err(error!(
                 Span::new(esc_start, l);
-                "unknown escape: '\\{}' is not a recognized escape sequence \
-                 (valid escapes: \\n, \\t, \\r, \\\\, \\', \\\", \\0, \\x{{..}})", b as char
-            ).with_primary_label("this isn't a recognized escape sequence"));
+                "unknown escape: '\\{}' is not a recognized escape sequence", b as char
+            )
+            .with_primary_label("this isn't a recognized escape sequence")
+            .with_note(VALID_ESCAPES));
         }
 
         _ => {
@@ -261,9 +276,10 @@ fn decode_escape(cursor: &mut Cursor) -> Result<Spanned<Escape>, Diagnostic> {
             let (ch, end) = finish_char(cursor, b_pos);
             return Err(error!(
                 Span::new(esc_start, end);
-                "unknown escape: '\\{}' is not a recognized escape sequence \
-                 (valid escapes: \\n, \\t, \\r, \\\\, \\', \\\", \\0, \\x{{..}})", ch
-            ).with_primary_label("this isn't a recognized escape sequence"));
+                "unknown escape: '\\{ch}' is not a recognized escape sequence"
+            )
+            .with_primary_label("this isn't a recognized escape sequence")
+            .with_note(VALID_ESCAPES));
         }
     };
 
@@ -278,7 +294,11 @@ pub fn parse_char(lex: &mut LogosLexer) -> Result<u32, Diagnostic> {
     let tok_span = global_span(lex);
 
     if raw == "''" {
-        return Err(error!(tok_span; "empty character literal: a char literal must contain exactly one character").with_primary_label("empty here"));
+        return Err(
+            error!(tok_span; "empty character literal")
+                .with_primary_label("empty here")
+                .with_note("a char literal must contain exactly one character"),
+        );
     }
 
     // Inner contents start 1 byte after the opening quote of the token.
@@ -310,10 +330,10 @@ pub fn parse_char(lex: &mut LogosLexer) -> Result<u32, Diagnostic> {
         // than just the tail end of it.
         return Err(error!(
             tok_span;
-            "too many characters in char literal: a char literal must contain exactly \
-             one character; did you mean to use a string literal (\"...\") instead?"
+            "too many characters in char literal"
         )
-        .with_primary_label("this literal contains more than one character"));
+        .with_primary_label("this literal contains more than one character")
+        .with_note(" a char literal must contain exactly one character; did you mean to use a string literal (\"...\") instead?"));
     }
 
     Ok(match value {
@@ -361,9 +381,9 @@ pub fn parse_str(lex: &mut LogosLexer) -> Result<String, Diagnostic> {
 
 #[cfg(test)]
 mod tests {
-    use logos::Logos;
-    use crate::Token;
     use super::*;
+    use crate::Token;
+    use logos::Logos;
 
     // ---------------------------------------------------------------
     // Helpers
@@ -1175,10 +1195,7 @@ mod tests {
 
     #[test]
     fn str_multibyte_mixed_with_escapes() {
-        assert_eq!(
-            lex_str(r#""café\n日本\x{21}""#).unwrap(),
-            "café\n日本!"
-        );
+        assert_eq!(lex_str(r#""café\n日本\x{21}""#).unwrap(), "café\n日本!");
     }
 
     #[test]

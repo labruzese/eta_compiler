@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use ariadne::{Label, Report, ReportKind};
+use ariadne::{Config, IndexType, Label, Report, ReportKind};
 use etac_span::SourceCache;
 
 use crate::{Diagnostic, Level};
@@ -37,7 +37,16 @@ impl Emitter for HumanEmitter {
 
         if let Some(loc) = diag.loc {
             let floc = sources.resolve(loc);
-            let mut b = Report::build(kind, floc).with_message(diag.message);
+            // resolve() returns byte ranges; tell ariadne to interpret span
+            // offsets as byte offsets so its line:col header matches what
+            // lc_index() (used by the logger) reports.  Without this,
+            // ariadne defaults to IndexType::Char and misreports columns
+            // whenever multibyte UTF-8 characters appear before the error
+            // in the same file.
+            let byte_config = Config::default().with_index_type(IndexType::Byte);
+            let mut b = Report::build(kind, floc)
+                .with_config(byte_config)
+                .with_message(diag.message);
             if let Some(c) = diag.code {
                 b = b.with_code(c);
             }

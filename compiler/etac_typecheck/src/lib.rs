@@ -1,9 +1,9 @@
 use etac_errors::Diagnostic;
 use etac_errors::error;
 
-mod collect;
-mod context;
-mod types;
+// mod collect;
+// mod context;
+// mod types;
 
 
 use etac_ast::*;
