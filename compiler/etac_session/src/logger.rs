@@ -49,7 +49,7 @@ impl Logger {
     /// wrapper is a transparent pass-through, so the caller's type doesn't change with the
     /// flag. Per the Eta spec, logging stops at the first lexical error but the tokens
     /// keep flowing to the parser.
-    pub fn tee<'a, I>(&'a self, file: &'a FileId, sources: &'a SourceCache, inner: I) -> Tee<'a, I>
+    pub fn tee<'a, I>(&'a self, file: FileId, sources: &'a SourceCache, inner: I) -> Tee<'a, I>
     where
         I: Iterator<Item = Result<(usize, Token, usize), Diagnostic>>,
     {
@@ -57,7 +57,7 @@ impl Logger {
     }
 
     /// Write a parsed tree to the `.parsed` log (no-op unless `--parse`). Best-effort.
-    pub fn log_tree(&self, file: &FileId, tree: &impl std::fmt::Display) {
+    pub fn log_tree(&self, file: FileId, tree: &impl std::fmt::Display) {
         if self.parse {
             let _ = self.write_parse(file, tree);
         }
@@ -65,7 +65,7 @@ impl Logger {
 
     /// Write the first syntactic error to the `.parsed` log (no-op unless `--parse`).
     /// Best-effort; a missing location or a log I/O failure is silently skipped.
-    pub fn log_syntax_error(&self, file: &FileId, sources: &SourceCache, diag: &Diagnostic) {
+    pub fn log_syntax_error(&self, file: FileId, sources: &SourceCache, diag: &Diagnostic) {
         if !self.parse {
             return;
         }
@@ -80,47 +80,47 @@ impl Logger {
 
     fn write_token(
         &self,
-        file: &FileId,
+        file: FileId,
         at: (usize, usize),
         token: &impl std::fmt::Display,
     ) -> std::io::Result<()> {
         let mut guard = self.lexer_writers.borrow_mut();
         let w = guard
-            .entry(file.clone())
+            .entry(file)
             .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".lexed"));
         writeln!(w, "{}:{} {}", at.0, at.1, token)
     }
 
     fn write_lexical_error(
         &self,
-        file: &FileId,
+        file: FileId,
         at: (usize, usize),
         message: &str,
     ) -> std::io::Result<()> {
         let mut guard = self.lexer_writers.borrow_mut();
         let w = guard
-            .entry(file.clone())
+            .entry(file)
             .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".lexed"));
         writeln!(w, "{}:{} error:{}", at.0, at.1, message)
     }
 
-    fn write_parse(&self, file: &FileId, program: &impl std::fmt::Display) -> std::io::Result<()> {
+    fn write_parse(&self, file: FileId, program: &impl std::fmt::Display) -> std::io::Result<()> {
         let mut guard = self.parser_writers.borrow_mut();
         let w = guard
-            .entry(file.clone())
+            .entry(file)
             .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".parsed"));
         writeln!(w, "{}", program)
     }
 
     fn write_syntactic_error(
         &self,
-        file: &FileId,
+        file: FileId,
         at: (usize, usize),
         message: &str,
     ) -> std::io::Result<()> {
         let mut guard = self.parser_writers.borrow_mut();
         let w = guard
-            .entry(file.clone())
+            .entry(file)
             .or_insert_with(|| open_log(&self.diag_root, file.as_str(), ".parsed"));
         writeln!(w, "{}:{} error:{}", at.0, at.1, message)
     }
@@ -130,7 +130,7 @@ impl Logger {
 /// logs as a side effect; see that method for the contract.
 pub struct Tee<'a, I> {
     logger: &'a Logger,
-    file: &'a FileId,
+    file: FileId,
     sources: &'a SourceCache,
     inner: I,
     /// Set once a lexical error has been seen: logging stops, forwarding continues.
@@ -149,7 +149,7 @@ where
         if self.logger.lex && !self.stopped {
             match &item {
                 Ok((start, tok, _end)) => {
-                    if let Ok(at) = self.sources.lc_index(*start) {
+                    if let Ok(at) = self.sources.lc_index(*start as u32) {
                         // best-effort: a log write failure must not alter the token stream
                         let _ = self.logger.write_token(self.file, at, tok);
                     }
