@@ -1,0 +1,13 @@
+[package]
+name = "etac_tests"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+etac.workspace = true
+generate_tests.workspace = true
+similar-asserts.workspace = true
+
+[lints]
+workspace = true

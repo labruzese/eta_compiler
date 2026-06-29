@@ -1,13 +1,12 @@
 [workspace]
 resolver = "3"
-members  = ["compiler/*", "proc_macros/*"]
+members  = ["compiler/*", "proc_macros/*", "etac_tests"]
 default-members = ["compiler/etac"]
 
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
 enum_glob_use = "allow"
-
 
 [workspace.package]
 version = "0.1.0"
@@ -19,20 +18,15 @@ authors = ["Skylar Abruzese"]
 ariadne         = "0.6"
 clap            = { version = "4.5", features = ["derive"] }
 either          = "1"
-env_logger      = "0.11"
 lalrpop         = "0.23"
 lalrpop-util    = { version = "0.21", features = ["lexer", "unicode"] }
-log             = "0.4"
 logos           = "0.16"
 pretty          = "0.12"
-similar-asserts = "2"
 unicode-width   = "0.2"
 tempfile 	= "3.27.0"
-getset 		= "0.1.7"
-derive-new	= "0.7.0"
-comemo 		= "0.5.1"
 
 # internal
+etac	      = { path = "compiler/etac"}
 etac_ast      = { path = "compiler/etac_ast" }
 etac_driver   = { path = "compiler/etac_driver" }
 etac_errors   = { path = "compiler/etac_errors" }
@@ -41,4 +35,8 @@ etac_parse    = { path = "compiler/etac_parse" }
 etac_session  = { path = "compiler/etac_session" }
 etac_span     = { path = "compiler/etac_span" }
 
-generate_tests 		= { path = "proc_macros/generate_tests" }
+# TESTING DEPENDENCIES
+similar-asserts = "2"
+env_logger      = "0.11"
+log             = "0.4"
+generate_tests	= { path = "proc_macros/generate_tests" }
