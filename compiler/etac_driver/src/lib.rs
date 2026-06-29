@@ -2,17 +2,25 @@
 //!
 //! Is responsible for passing input between each phase and attaching the
 //! --lex, --parse, etc. loggers to each phase.
+//!
+//! Every diagnostic in the pipeline flows through a single [`DiagCtxt`] created here.
+//! The driver no longer collects `Vec<Diagnostic>` to drain later: each phase emits as
+//! it goes, and the driver only decides control flow from the phase's result.
 
-use etac_errors::{emit, error, Diagnostic, Level};
+use etac_errors::{DiagCtxt, Diagnostic, Level};
 use etac_lexer::Token;
-use etac_parse::ParseResult;
+use etac_parse::Parsed;
 use etac_session::{cli::Flags, logger::Logger};
 use etac_span::{FileId, InterfaceId, SourceCache, SourceId};
 
 /// Runs the compiler with the given flags. Errors are emitted as side effects, returns a result
 /// that indicates whether or not the program was able to compile
 pub fn run(flags: Flags) -> Result<(), ()> {
-    let mut cache = SourceCache::new();
+    let cache = SourceCache::new();
+    // The one and only diagnostic context. Borrows `cache` (interior-mutable) so it can
+    // render spans; every phase below reports through it.
+    let dcx = DiagCtxt::new(&cache);
+
     let mut sources: Vec<SourceId> = vec![];
     let mut interfaces: Vec<InterfaceId> = vec![];
 
@@ -20,13 +28,17 @@ pub fn run(flags: Flags) -> Result<(), ()> {
     // exits with `Err` on a failure to parse path but doesn't check existance
     for file in &flags.source_files {
         let Some(file_str) = file.to_str() else {
-            emit(&mut cache, error!("non-UTF8 file name {}", file.to_string_lossy()));
+            dcx.err_no_span(format!("non-UTF8 file name {}", file.to_string_lossy()))
+                .emit();
             return Err(());
         };
         match file.extension().and_then(|x| x.to_str()) {
             Some("eta") => sources.push(SourceId::new(file_str)),
             Some("eti") => interfaces.push(InterfaceId::new(file_str)),
-            ext => emit(&mut cache, error!("unknown file type {}", ext.unwrap_or(""))),
+            ext => {
+                dcx.err_no_span(format!("unknown file type {}", ext.unwrap_or("")))
+                    .emit();
+            }
         }
     }
 
@@ -35,7 +47,7 @@ pub fn run(flags: Flags) -> Result<(), ()> {
     let _programs: Vec<_> = sources
         .iter()
         .map(|program| {
-            drive_parser::<_, etac_parse::ProgramParser>(&flags, &mut cache, &logger, program).inspect(
+            drive_parser::<_, etac_parse::ProgramParser>(&flags, &dcx, &logger, program).inspect(
                 |etac_ast::Program { uses, definitions: _, .. }| {
                     for u in uses {
                         interfaces.push(InterfaceId::new(u.id.sym.as_str()))
@@ -47,7 +59,7 @@ pub fn run(flags: Flags) -> Result<(), ()> {
 
     let _interfaces: Vec<_> = interfaces
         .iter()
-        .map(|interface| drive_parser::<_, etac_parse::InterfaceParser>(&flags, &mut cache, &logger, interface))
+        .map(|interface| drive_parser::<_, etac_parse::InterfaceParser>(&flags, &dcx, &logger, interface))
         .collect::<Result<_, _>>()?;
 
     Ok(())
@@ -56,7 +68,7 @@ pub fn run(flags: Flags) -> Result<(), ()> {
 /// Helper to drive a specific a parser.
 fn drive_parser<Out, Parser>(
     flags: &Flags,
-    cache: &mut SourceCache,
+    dcx: &DiagCtxt,
     logger: &Logger,
     file_id: &FileId,
 ) -> Result<Out, ()>
@@ -64,12 +76,14 @@ where
     Parser: etac_parse::IParser<Out>,
     Out: std::fmt::Display,
 {
+    let cache = dcx.sources();
+
     // place the file into our cache (global source file), gets back the offset and the read
     // source from disk, fails if file doesn't exist
     let (base, source) = match cache.load(file_id) {
         Ok(s) => s,
         Err(io_err) => {
-            emit(cache, io_err.into());
+            dcx.emit(io_err.into());
             return Err(());
         }
     };
@@ -80,7 +94,7 @@ where
     // callback closure for our lexer, is a no-op if lex_logging is disabled
     let tok_map_fn = |lex_result| {
         if lex_logging {
-            token_callback(logger, file_id, &cache, &lex_result)?;
+            token_callback(logger, file_id, cache, &lex_result)?;
             if lex_result.is_err() {
                 lex_logging = false
             }
@@ -91,38 +105,38 @@ where
     // lexer with attached (side-effect only) callback
     let mut lexer = etac_lexer::Lexer::new(base, &source).map(tok_map_fn);
 
-    // parse logging callbacks happen here
-    match etac_parse::parse::<_, _, Parser>(&mut lexer) {
-        ParseResult::Clean(out) => {
+    // The parser emits every diagnostic through `dcx` itself; here we only log and pick
+    // a control-flow path from the outcome.
+    match etac_parse::parse::<_, _, Parser>(dcx, &mut lexer) {
+        Parsed::Ok(out) => {
             if parse_logging {
-                parse_clean_cb(logger, cache, file_id, &out)?;
+                log_parse_tree(logger, dcx, file_id, &out)?;
             }
             Ok(out)
         }
-        ParseResult::WithDiags { out, diags } => {
+        Parsed::Recovered { out, first_error, .. } => {
             if parse_logging {
-                parse_with_diags_cb(logger, cache, file_id, &diags)?;
-            }
-            for d in diags {
-                emit(cache, d);
+                log_first_syntax_error(logger, dcx, file_id, &first_error)?;
             }
             Ok(out)
         }
-        ParseResult::FatalError(diags) => {
-            // drain lexer for more diagnostics
+        Parsed::Failed { first_error, .. } => {
+            // drain lexer so the `.lexed` log still captures every token (and the first
+            // lexical error) even though parsing stopped early
             lexer.for_each(drop);
             if parse_logging {
-                parse_fatal_cb(logger, cache, file_id, &diags)?;
-            }
-            for d in diags {
-                emit(cache, d)
+                log_first_syntax_error(logger, dcx, file_id, &first_error)?;
             }
             Err(())
         }
     }
 }
 
-// --- callbacks ---
+// --- logging glue ---
+//
+// These only write the external `.lexed`/`.parsed` logs. They never emit diagnostics for
+// the *compiled program* — the parser already did that through `dcx`. They do route their
+// own I/O failures into `dcx` so a broken log file surfaces like any other error.
 
 fn token_callback(
     logger: &Logger,
@@ -137,7 +151,7 @@ fn token_callback(
         }
         Err(diag) => {
             let loc = cache.lc_index(diag.loc.as_ref().expect("lexcial error must have location").lo)?;
-            if diag.level == etac_errors::Level::Error {
+            if diag.level == Level::Error {
                 logger.log_lexical_error(file_id, loc, &diag.message)?
             };
         }
@@ -145,48 +159,29 @@ fn token_callback(
     Ok(())
 }
 
-fn parse_clean_cb<Out: std::fmt::Display>(
+fn log_parse_tree<Out: std::fmt::Display>(
     logger: &Logger,
-    cache: &mut SourceCache,
+    dcx: &DiagCtxt,
     file_id: &FileId,
     out: &Out,
 ) -> Result<(), ()> {
-    logger.log_parse(&file_id, out).map_err(|e| emit(cache, e.into()))?;
-    Ok(())
+    logger.log_parse(file_id, out).map_err(|e| {
+        dcx.emit(e.into());
+    })
 }
 
-fn parse_with_diags_cb(
+fn log_first_syntax_error(
     logger: &Logger,
-    cache: &mut SourceCache,
+    dcx: &DiagCtxt,
     file_id: &FileId,
-    diags: &Vec<Diagnostic>,
+    first_error: &Diagnostic,
 ) -> Result<(), ()> {
-    if let Some(error) = diags.iter().find(|d| d.level == Level::Error) {
-        logger
-            .log_syntactic_error(
-                &file_id,
-                cache
-                    .lc_index(error.loc.expect("syntactic error has location").lo)
-                    .map_err(|e| emit(cache, e.into()))?,
-                &error.message,
-            )
-            .map_err(|e| emit(cache, e.into()))?;
-    };
-    Ok(())
-}
-
-fn parse_fatal_cb(
-    logger: &Logger,
-    cache: &mut SourceCache,
-    file_id: &FileId,
-    diags: &Vec<Diagnostic>,
-) -> Result<(), ()> {
-    let diag = diags.iter().find(|d| d.level == Level::Error).unwrap();
-    let loc = cache
-        .lc_index(diag.loc.as_ref().expect("syntactic error must have location").lo)
-        .map_err(|e| emit(cache, e.into()))?;
-    logger
-        .log_syntactic_error(&file_id, loc, &diag.message)
-        .map_err(|e| emit(cache, e.into()))?;
-    Ok(())
+    let cache = dcx.sources();
+    let loc = first_error.loc.as_ref().expect("syntactic error must have location");
+    let at = cache.lc_index(loc.lo).map_err(|e| {
+        dcx.emit(e.into());
+    })?;
+    logger.log_syntactic_error(file_id, at, &first_error.message).map_err(|e| {
+        dcx.emit(e.into());
+    })
 }

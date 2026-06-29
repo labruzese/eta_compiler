@@ -1,34 +1,26 @@
 #[cfg(test)]
 mod tests {
-    use crate::{IParser, InterfaceParser, ParseResult, ProgramParser, parse};
-    use etac_errors::{Diagnostic, Level};
+    use crate::{IParser, InterfaceParser, Parsed, ProgramParser, parse};
+    use etac_errors::{BufferEmitter, DiagCtxt, Diagnostic, Level};
     use etac_lexer::Lexer;
     use etac_span::{FileId, SourceCache};
     use std::io::Write;
     use tempfile::NamedTempFile;
-    use std::assert_matches;
 
-    pub struct Parsed<Out> {
-        result: ParseResult<Out>,
+    /// Test harness around a single parse: the [`Parsed`] outcome plus the full list of
+    /// diagnostics the parse emitted (captured by a [`BufferEmitter`]) and the cache
+    /// needed to resolve their spans. The `parse` entry point emits through a context
+    /// rather than returning a diagnostic list, so we snapshot the buffer here.
+    pub struct Harness<Out> {
+        parsed: Parsed<Out>,
+        diags: Vec<Diagnostic>,
         _file: NamedTempFile,
         cache: SourceCache,
     }
 
-    impl<Out> std::ops::Deref for Parsed<Out> {
-        type Target = ParseResult<Out>;
-        fn deref(&self) -> &ParseResult<Out> {
-            &self.result
-        }
-    }
-
-    impl<Out: std::fmt::Display> Parsed<Out> {
+    impl<Out: std::fmt::Display> Harness<Out> {
         pub fn error_diags(&self) -> Vec<&Diagnostic> {
-            match &self.result {
-                ParseResult::Clean(_) => vec![],
-                ParseResult::WithDiags { out: _, diags } | ParseResult::FatalError(diags) => {
-                    diags.iter().filter(|d| d.level == Level::Error).collect()
-                }
-            }
+            self.diags.iter().filter(|d| d.level == Level::Error).collect()
         }
         pub fn error_count(&self) -> usize {
             self.error_diags().len()
@@ -42,18 +34,14 @@ mod tests {
             self.error_diags().iter().map(|d| d.message.as_str()).collect()
         }
         pub fn output_sexpr(&self) -> Option<String> {
-            match self.result {
-                ParseResult::Clean(ref out) |
-                ParseResult::WithDiags { ref out, diags: _ } => Some(out),
-                ParseResult::FatalError(_) => None,
-            }.as_ref().map(|o| format!("{o}"))
+            self.parsed.output().map(|o| format!("{o}"))
         }
         pub fn error_node_count(&self) -> usize {
             self.output_sexpr().map(|s| s.split("Error").count() - 1).unwrap_or(0)
         }
     }
 
-    fn run_parse<Out, P: IParser<Out>>(src: &str, ext: &str) -> Parsed<Out> {
+    fn run_parse<Out, P: IParser<Out>>(src: &str, ext: &str) -> Harness<Out> {
         let mut tmp = tempfile::Builder::new()
             .suffix(ext)
             .tempfile()
@@ -65,27 +53,37 @@ mod tests {
         let cache = SourceCache::new();
         let (base, source) = cache.load(&file_id).unwrap();
         let mut lexer = Lexer::new(base, &source);
-        let result = parse::<_, _, P>(&mut lexer);
-        Parsed { result, _file: tmp, cache }
+
+        // Buffer the diagnostics instead of printing them. The buffer is shared with the
+        // context (it is an `Rc` inside); dropping the context at the end of the block
+        // releases its borrow of `cache` so the cache can move into the harness.
+        let buf = BufferEmitter::new();
+        let parsed = {
+            let dcx = DiagCtxt::with_emitter(&cache, Box::new(buf.clone()));
+            parse::<_, _, P>(&dcx, &mut lexer)
+        };
+        let diags = buf.take();
+
+        Harness { parsed, diags, _file: tmp, cache }
     }
 
     #[track_caller]
     #[allow(dead_code)]
     pub fn expect_ok<Out: std::fmt::Display + std::fmt::Debug, P: IParser<Out>>(src: &str, ext: &str) -> String {
         let p = run_parse::<_, P>(src, ext);
-        assert_matches!(
-            p.result, ParseResult::Clean(..),
+        assert!(
+            matches!(p.parsed, Parsed::Ok(..)),
             "expected clean parse, got {} error(s): {:?}",
             p.error_count(),
             p.messages()
         );
-        format!("{}", p.output_sexpr().as_ref().unwrap())
+        p.output_sexpr().unwrap()
     }
     #[track_caller]
-    pub fn expect_recovered<Out: std::fmt::Display + std::fmt::Debug, P: IParser<Out>>(src: &str, ext: &str) -> Parsed<Out> {
+    pub fn expect_recovered<Out: std::fmt::Display + std::fmt::Debug, P: IParser<Out>>(src: &str, ext: &str) -> Harness<Out> {
         let p = run_parse::<_, P>(src, ext);
-        assert_matches!(
-            p.result, ParseResult::WithDiags{..},
+        assert!(
+            matches!(p.parsed, Parsed::Recovered { .. }),
             "expected recovery (output + errors); got output={}, errors={:?}",
             p.output_sexpr().is_some(),
             p.messages()
@@ -93,10 +91,10 @@ mod tests {
         p
     }
     #[track_caller]
-    pub fn expect_failed<Out: std::fmt::Display + std::fmt::Debug, P: IParser<Out>>(src: &str, ext: &str) -> Parsed<Out> {
+    pub fn expect_failed<Out: std::fmt::Display + std::fmt::Debug, P: IParser<Out>>(src: &str, ext: &str) -> Harness<Out> {
         let p = run_parse::<_, P>(src, ext);
-        assert_matches!(
-            p.result, ParseResult::FatalError(..),
+        assert!(
+            matches!(p.parsed, Parsed::Failed { .. }),
             "expected hard failure (no output); but parse produced an AST"
         );
         p

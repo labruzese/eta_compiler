@@ -8,7 +8,7 @@
 
 use ariadne::{Cache, Source};
 use std::borrow::Borrow;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
@@ -161,6 +161,43 @@ impl SourceCache {
             CachedSource { rc: Rc::clone(&rc), source: Source::from(rc), base },
         );
         Ok(())
+    }
+}
+
+impl SourceCache {
+    /// Borrow this cache as an ariadne [`Cache`] without needing `&mut`.
+    ///
+    /// The returned view holds an interior [`RefMut`] for its whole lifetime, so at
+    /// most one may be live at a time (one diagnostic renders at a time). Every file
+    /// referenced by the report must already be loaded — which it always is by the
+    /// time we render a diagnostic, since the span pointing at it could only have been
+    /// minted by lexing that file. This is what lets a single shared `&SourceCache`
+    /// back both the lexer and the diagnostic emitter.
+    pub fn cache_view(&self) -> CacheView<'_> {
+        CacheView { files: self.files.borrow_mut() }
+    }
+}
+
+/// A borrowed, interior-mutable ariadne [`Cache`] view over a [`SourceCache`].
+/// Created by [`SourceCache::cache_view`].
+pub struct CacheView<'a> {
+    files: RefMut<'a, HashMap<FileId, CachedSource>>,
+}
+
+impl Cache<FileId> for CacheView<'_> {
+    type Storage = Rc<str>;
+
+    fn fetch(&mut self, id: &FileId) -> Result<&Source<Rc<str>>, impl fmt::Debug> {
+        // `self.files.get` borrows from `self` (tied to `&mut self`), so the returned
+        // `&Source` lives exactly as long as ariadne needs it within this call.
+        self.files
+            .get(id)
+            .map(|cs| &cs.source)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("source not loaded: {id}")))
+    }
+
+    fn display<'a>(&self, id: &'a FileId) -> Option<impl fmt::Display + 'a> {
+        Some(id.as_str())
     }
 }
 

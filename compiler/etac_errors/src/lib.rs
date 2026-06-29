@@ -1,11 +1,23 @@
-use std::{fmt::Debug};
-use std::convert::Infallible;
-use ariadne::{Color, Label, Report, ReportKind};
+//! Compiler diagnostics.
+//!
+//! The pipeline is: build a [`Diagnostic`] (plain data), then route it through a
+//! [`DiagCtxt`] — the single context that owns an [`Emitter`] and the error/warning
+//! counts. Nothing emits except through that context, and an emitted error yields an
+//! [`ErrorGuaranteed`] proof token so "we failed" can be made to entail "the user was
+//! told why" at the type level.
+//!
+//! * Plain-data producers (the lexer's logos callbacks, lalrpop's recovered errors) keep
+//!   constructing [`Diagnostic`]s directly — often via the [`error!`] macro — because they
+//!   have no context on hand. The layer above funnels them in with [`DiagCtxt::emit`].
+//! * Code that holds a `&DiagCtxt` should prefer the builders ([`DiagCtxt::err`] etc.),
+//!   which return a must-use [`Diag`] that emits or cancels before it drops.
 
-use etac_span::{Span, SourceCache};
+use ariadne::Color;
+
+use etac_span::Span;
 
 #[macro_export]
-/// Creates a new Level::Error Diagnostic with a provided message. 
+/// Creates a new Level::Error Diagnostic with a provided message.
 /// Note the syntax is to have a semicolon (`;`) after the span.
 /// `error!(span; "no identifier called {}", id)` => Diagnostic with span
 /// `error!("file does not exist")` => Diagnostic *without* a span
@@ -26,70 +38,10 @@ pub enum Level {
     Note,
 }
 
-// re-export diagnostic
+mod dcx;
 mod diagnostic;
+mod emitter;
+
+pub use dcx::*;
 pub use diagnostic::*;
-
-/// write the diagnostic to stderr (pretty)
-/// consumes the diagnostic so it can only be emitted once after you have done all the modifications
-pub fn emit(source_cache: &mut SourceCache, diag: Diagnostic) {
-    let kind = match diag.level {
-        Level::Error   => ReportKind::Error,
-        Level::Warning => ReportKind::Warning,
-        Level::Note    => ReportKind::Advice,
-    };
-    static NO_SPAN: NoSpan = NoSpan {};
-    static NO_CACHE: NoCache = NoCache {};
-
-    match diag.loc {
-        Some(loc) => {
-            let floc = source_cache.resolve(loc);
-            let mut b = Report::build(kind, floc)
-                .with_message(diag.message);
-            if let Some(c) = diag.code { b = b.with_code(c); }
-            if let Some(n) = diag.note { b = b.with_code(n); }
-            for (span, msg, color) in diag.labels {
-                let fspan = source_cache.resolve(span);
-                b = b.with_label(Label::new(fspan).with_message(msg).with_color(color));
-            }
-            let _ = b.finish().eprint(source_cache);
-        },
-        None      => {
-            let mut b = Report::build(kind, NO_SPAN)
-                .with_message(diag.message);
-            if let Some(c) = diag.code { b = b.with_code(c); }
-            if let Some(n) = diag.note { b = b.with_code(n); }
-            for (_span, msg, color) in diag.labels {
-                //warn!("span added to a label of a diagnostic that doesn't have a location. It currently isn't possible for this span to get reported");
-                b = b.with_label(Label::new(NO_SPAN).with_message(msg).with_color(color));
-            }
-            let _ = b.finish().eprint(NO_CACHE);
-        },
-    };
-}
-
-#[derive(Clone, Copy)]
-/// Dummy struct for satisfying ariadne when we don't have a source. 0-sized and all of it's impls
-/// are no-ops (or as close as they can be).
-pub struct NoSpan {}
-#[derive(Clone, Copy)]
-/// Dummy struct for satisfying ariadne when we don't have a source. 0-sized and all of it's impls
-/// are no-ops (or as close as they can be).
-pub struct NoCache {}
-impl ariadne::Span for NoSpan {
-    type SourceId = ();
-    fn source(&self) -> &Self::SourceId {&()}
-    fn start(&self) -> usize {0}
-    fn end(&self) -> usize {0}
-}
-impl ariadne::Cache<()> for NoCache {
-    type Storage = &'static str;
-    fn fetch(&mut self, _id: &()) -> Result<&ariadne::Source<Self::Storage>, impl std::fmt::Debug> {
-        static SOURCE: std::sync::LazyLock<ariadne::Source<&'static str>> 
-                     = std::sync::LazyLock::new(||ariadne::Source::from(""));
-        Ok::<_, Infallible>(&SOURCE)
-    }
-    fn display<'a>(&self, _id: &'a ()) -> Option<impl std::fmt::Display + 'a> {
-        Some("")
-    }
-}
+pub use emitter::*;
