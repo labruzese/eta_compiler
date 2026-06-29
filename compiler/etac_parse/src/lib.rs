@@ -19,6 +19,7 @@ pub struct ParseState {
 }
 
 impl ParseState {
+    #[must_use]
     pub fn new() -> Self {
         ParseState::default()
     }
@@ -27,6 +28,8 @@ impl ParseState {
 pub trait IParser<ParseOut> {
     fn new() -> Self;
 
+    /// # Errors
+    /// Error produced by the lalrpop parser
     fn parse<__TOKEN, __TOKENS>(
         &self,
         state: &mut ParseState,
