@@ -130,10 +130,6 @@ impl fmt::Debug for Span {
 // Enforces the size promised above; widening either field would regress every AST node.
 const _: () = assert!(size_of::<Span>() == 8);
 
-/// Temporary alias so existing `EtaSpan` *type* references keep compiling during
-/// the Phase 1 migration. Delete once the Phase 2 AST refactor lands.
-pub type EtaSpan = Span;
-
 /// A loaded file: its ariadne [`Source`] (which owns the text and the
 /// precomputed line table) and its base offset in the global space.
 ///
