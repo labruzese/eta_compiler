@@ -67,6 +67,8 @@ pub trait IParser<'dcx, 'src> {
 
     fn errors_mut(&mut self) -> &mut [Diag<'dcx, 'src>];
 
+    fn into_errors(self) -> Vec<Diag<'dcx, 'src>>;
+
     fn diagnostic_context(&self) -> &'dcx DiagCtxt<'src>;
 
 }
@@ -118,6 +120,10 @@ macro_rules! impl_iparser {
 
             fn errors_mut(&mut self) -> &mut [Diag<'dcx, 'src>] {
                 &mut self.state.etac_errs
+            }
+
+            fn into_errors(self) -> Vec<Diag<'dcx, 'src>> {
+                self.state.etac_errs
             }
 
             fn diagnostic_context(&self) -> &'dcx DiagCtxt<'src> {

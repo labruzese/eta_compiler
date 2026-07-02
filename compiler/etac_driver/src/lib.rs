@@ -98,6 +98,9 @@ pub fn run(flags: &Flags) -> Result<CompilationSuccess, CompilationFailure> {
                 let _ = lexer.map(|t| t.map_err(etac_errors::Diag::emit));
             },
         }
+        for err in parser.into_errors() {
+            let _guar = err.emit();
+        }
     }
 
     let mut interfaces = Vec::new();
@@ -122,6 +125,9 @@ pub fn run(flags: &Flags) -> Result<CompilationSuccess, CompilationFailure> {
             },
         }
 
+        for err in parser.into_errors() {
+            let _guar = err.emit();
+        }
     }
 
     match dcx.has_errors() {

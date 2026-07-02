@@ -195,7 +195,7 @@ fn parse_hex(cursor: &mut Cursor, open: u32) -> Result<u32, InternalLexerError> 
                     span = Span::new(open, end),
                     message = "unterminated unicode escape",
                     plabel = "unicode escape unclosed here",
-                    note = "expected a closing '}}' before the end of the literal"
+                    note = "expected a closing '}' before the end of the literal"
                 });
             }
         }

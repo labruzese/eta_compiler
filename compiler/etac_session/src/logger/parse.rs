@@ -51,6 +51,10 @@ where
         self.inner.errors_mut()
     }
 
+    fn into_errors(self) -> Vec<Diag<'dcx, 'src>> {
+        self.inner.into_errors()
+    }
+
     fn diagnostic_context(&self) -> &'dcx etac_errors::DiagCtxt<'src> {
         self.inner.diagnostic_context()
     }
