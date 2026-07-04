@@ -1,5 +1,5 @@
 use etac_errors::{Diag, Level};
-use etac_lexer::Token;
+use etac_lexer::{ILexer};
 use etac_parse::IParser;
 use etac_span::{FileId, SourceCache};
 use std::{fs::File, io::{BufWriter, Write}};
@@ -21,10 +21,8 @@ where
 {
     type Out = InnerParser::Out;
 
-    fn parse<Lexer>(&mut self, lexer: &mut Lexer) -> etac_parse::Parsed<Self::Out>
-    where
-        Lexer: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>>,
-        'src: 'dcx {
+    fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> etac_parse::Parsed<Self::Out>
+    where 'src: 'dcx {
         let result = self.inner.parse(lexer);
         if self.stopped || self.writer.is_none() {
             return result;

@@ -1,7 +1,7 @@
 use std::{fs::File, io::BufWriter, io::Write};
 
 use etac_errors::{Diag, Level};
-use etac_lexer::Token;
+use etac_lexer::{ILexer, Token};
 use etac_span::{FileId, SourceCache};
 
 use crate::logger::Logger;
@@ -16,11 +16,11 @@ pub struct TeeLexer<'src, I> {
     stopped: bool,
 }
 
-impl<'dcx, 'src, I> Iterator for TeeLexer<'src, I>
-where
-    I: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>>,
-    'src: 'dcx,
-{
+impl<'dcx, 'src, I: ILexer<'dcx, 'src>> ILexer<'dcx, 'src> for TeeLexer<'src, I> 
+where 'src: 'dcx {}
+
+impl<'dcx, 'src, I: ILexer<'dcx, 'src>> Iterator for TeeLexer<'src, I>
+where 'src: 'dcx {
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {

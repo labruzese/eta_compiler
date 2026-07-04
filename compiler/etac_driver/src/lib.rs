@@ -12,155 +12,164 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use etac_errors::{etac_error, Diag, DiagCtxt};
+use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed, etac_error};
 use etac_parse::{IParser, Parsed};
 use etac_session::{cli::Flags, logger::Logger};
-use etac_span::{InterfaceId, SourceCache, SourceId, Span};
+use etac_span::{FileId, InterfaceId, SourceCache, SourceId, Span};
 
-#[derive(Debug)]
-pub struct CompilationFailure {
-    pub errors: usize,
-    pub warnings: usize,
+pub use crate::status::{CompilationFailure, CompilationSuccess};
+
+mod compat;
+mod status;
+
+
+type Result<T> = std::result::Result<T, ErrorGuaranteed>;
+type CompilationResult = std::result::Result<CompilationSuccess, CompilationFailure>;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum LoadBlame {
+    CommandLine,
+    Use(Span),
 }
-impl From<&DiagCtxt<'_>> for CompilationFailure {
-    fn from(value: &DiagCtxt<'_>) -> Self {
-        CompilationFailure {
-            errors: value.err_count(),
-            warnings: value.warn_count(),
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum File {
+    Program(SourceId),
+    Interface(InterfaceId),
+}
+
+fn parse_path(dcx: &DiagCtxt<'_>, file: &Path) -> Result<File> {
+    let Some(file_str) = file.to_str() else {
+        return Err(dcx.err_no_span(format!("non-UTF8 file name {}", file.to_string_lossy())).emit());
+    };
+
+    match file.extension().and_then(|x| x.to_str()) {
+        Some("eta") => Ok(File::Program(SourceId::new(file_str))),
+        Some("eti") => Ok(File::Interface(InterfaceId::new(file_str))),
+        ext => Err(dcx.err_no_span(format!("unknown file type {}", ext.unwrap_or(""))).emit()),
+    }
+}
+
+fn find_use_interface(me: SourceId, sym: &str) -> InterfaceId {
+    let dir = Path::new(me.as_str())
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+    let path = dir.join(format!("{sym}.eti"));
+    InterfaceId::new(path.to_string_lossy())
+}
+
+fn load_file<'src>(cache: &'src SourceCache, dcx: &DiagCtxt<'src>, file: FileId, blame: LoadBlame) -> Result<(u32, &'src str)> {
+    match cache.load(file) {
+        Ok(loaded) => Ok(loaded),
+        Err(ioe) => {
+            let guar = match blame {
+                LoadBlame::CommandLine => Diag::io(dcx, &ioe).emit(),
+                LoadBlame::Use(span) => etac_error! {
+                    dcx, span, "cannot load interface file `{}`: {}", file.as_str(), ioe;
+                    primary: "required by this `use`";
+                }.emit(),
+            };
+            Err(guar)
         }
     }
 }
-pub struct CompilationSuccess {
-    pub warnings: usize
-}
-impl From<&DiagCtxt<'_>> for CompilationSuccess {
-    fn from(value: &DiagCtxt<'_>) -> Self {
-        CompilationSuccess {
-            warnings: value.warn_count(),
+
+
+
+fn parse_one<'dcx, 'src, P>(
+    logger: &'dcx Logger,
+    cache: &'src SourceCache,
+    dcx: &'dcx DiagCtxt<'src>,
+    file: FileId,
+    blame: LoadBlame,
+    parser: P,
+) -> Result<Option<P::Out>>
+where
+    P: IParser<'dcx, 'src>,
+    P::Out: std::fmt::Display,
+    'src: 'dcx,
+{
+    let (base, source) = load_file(cache, dcx, file, blame)?;
+
+    let lexer = etac_lexer::Lexer::new(base, source, dcx);
+
+    let mut lexer = match (logger.lex, blame) {
+        (true, LoadBlame::CommandLine) => compat::ULexer::Tee(logger.tee_lexer(file, cache, lexer)),
+        _ => compat::ULexer::Raw(lexer),
+    };
+
+    let mut parser = match (logger.parse, blame) {
+        (true, LoadBlame::CommandLine) => compat::UParser::Tee(logger.tee_parser(file, cache, parser)),
+        _ => compat::UParser::Raw(parser),
+    };
+
+    let out = match parser.parse(&mut lexer) {
+        Parsed::Ok(tree) | Parsed::Recovered(tree) => Some(tree),
+        Parsed::Failed => {
+            lexer.for_each(|i| {let _ = i.map_err(Diag::emit);});
+            None
         }
-    }
+    };
+
+    parser
+        .into_errors()
+        .into_iter()
+        .for_each(|e| {e.emit();});
+
+    Ok(out)
 }
 
 /// Runs the compiler with the given flags. Errors are emitted as side effects, returns a result
 /// that indicates whether or not the program was able to compile
 /// # Errors 
 /// when the program is not able to be compiled 
-pub fn run(flags: &Flags) -> Result<CompilationSuccess, CompilationFailure> {
+pub fn run(flags: &Flags) -> CompilationResult {
     let cache = SourceCache::new();
-
-    // Captures the --lex/--parse flags; phases attach to it by name below.
     let logger = Logger::new(flags);
-
     let dcx = DiagCtxt::new(&cache);
 
-    let mut pids: Vec<SourceId> = vec![];
-    let mut iids: Vec<(InterfaceId, Option<Span>)> = vec![];
-    let mut queued_interfaces: HashSet<InterfaceId> = HashSet::new();
+    let mut files: HashSet<File> = HashSet::new();
 
     // decode paths for all the files passed in `flags`
     // exits with `Err` on a failure to parse path but doesn't check existance
     for file in &flags.source_files {
-        let Some(file_str) = file.to_str() else {
-            dcx.err_no_span(format!("non-UTF8 file name {}", file.to_string_lossy()))
-                .emit();
-            return Err((&dcx).into());
-        };
-        match file.extension().and_then(|x| x.to_str()) {
-            Some("eta") => pids.push(SourceId::new(file_str)),
-            Some("eti") => {
-                let iid = InterfaceId::new(file_str);
-                if queued_interfaces.insert(iid) {
-                    iids.push((iid, None));
-                }
-            }
-            ext => {
-                dcx.err_no_span(format!("unknown file type {}", ext.unwrap_or("")))
-                    .emit();
-            }
-        }
+        let id = parse_path(&dcx, file.as_path())
+            .map_err(|_| CompilationFailure::from(&dcx))?;
+        files.insert(id);
     }
 
-
     let mut programs = Vec::new();
-    for program_id in pids {
-        // make parser
-        let parser = etac_parse::ProgramParser::new(&dcx);
-        let mut parser = logger.tee_parser(program_id, &cache, parser);
-        // load source
-        let (base, source) = cache.load(program_id).map_err(|ioe| { Diag::io(&dcx, &ioe).emit(); CompilationFailure::from(&dcx)})?;
-        // make lexer
-        let lexer = etac_lexer::Lexer::new(base, source, &dcx);
-        let mut lexer = logger.tee_lexer(program_id, &cache, lexer);
-        // parse
-        match parser.parse(&mut lexer) {
-            Parsed::Ok(program) |
-            Parsed::Recovered(program) => {
+    let mut interfaces = Vec::new();
+
+    for file in files {
+        match file {
+            File::Program(p) => {
+                let pparser = etac_parse::ProgramParser::new(&dcx);
+                let parsed = parse_one(&logger, &cache, &dcx, p, LoadBlame::CommandLine, pparser)
+                    .map_err(|_| CompilationFailure::from(&dcx))?;
+                let Some(program) = parsed else { continue };
+                // uses
                 for u in &program.uses {
-                    let dir = Path::new(program_id.as_str())
-                        .parent()
-                        .unwrap_or_else(|| Path::new(""));
-                    let path = dir.join(format!("{}.eti", u.id.sym));
-                    let iid = InterfaceId::new(path.to_string_lossy());
-                    if queued_interfaces.insert(iid) {
-                        iids.push((iid, Some(u.span)));
-                    }
+                    let i = find_use_interface(p, &u.id.sym);
+                    let iparser = etac_parse::InterfaceParser::new(&dcx);
+                    let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::Use(u.span), iparser)
+                        .map_err(|_| CompilationFailure::from(&dcx))?;
+                    let Some(interface) = parsed else { continue };
+                    interfaces.push(interface);
                 }
                 programs.push(program);
             },
-            Parsed::Failed => {
-                // produce extra diagnostics
-                let _ = lexer.map(|t| t.map_err(etac_errors::Diag::emit));
-            },
-        }
-        for err in parser.into_errors() {
-            let _guar = err.emit();
-        }
-    }
-
-    let mut interfaces = Vec::new();
-    for (interface_id, use_span) in iids {
-        // make parser
-        let parser = etac_parse::InterfaceParser::new(&dcx);
-        let mut parser = logger.tee_parser(interface_id, &cache, parser);
-        // load source
-        let (base, source) = match cache.load(interface_id) {
-            Ok(loaded) => loaded,
-            Err(ioe) => {
-                match use_span {
-                    Some(span) => {
-                        etac_error! {
-                            dcx, span, "cannot find interface file `{}`: {}", interface_id.as_str(), ioe;
-                            primary: "required by this `use`";
-                        }
-                        .emit();
-                    }
-                    None => {
-                        Diag::io(&dcx, &ioe).emit();
-                    }
-                }
-                return Err((&dcx).into());
-            }
-        };
-        // make lexer
-        let lexer = etac_lexer::Lexer::new(base, source, &dcx);
-        let mut lexer = logger.tee_lexer(interface_id, &cache, lexer);
-        // parse
-        match parser.parse(&mut lexer) {
-            Parsed::Ok(interface) |
-            Parsed::Recovered(interface) => {
+            File::Interface(i) => {
+                let parser = etac_parse::InterfaceParser::new(&dcx);
+                let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::CommandLine, parser)
+                    .map_err(|_| CompilationFailure::from(&dcx))?;
+                let Some(interface) = parsed else { continue };
                 interfaces.push(interface);
             },
-            Parsed::Failed => {
-                // produce extra diagnostics
-                let _ = lexer.map(|t| t.map_err(etac_errors::Diag::emit));
-            },
-        }
-
-        for err in parser.into_errors() {
-            let _guar = err.emit();
         }
     }
 
+    // report errors
     match dcx.has_errors() {
         Some(_)=> Err((&dcx).into()),
         None => Ok((&dcx).into()),

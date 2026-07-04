@@ -13,6 +13,8 @@ use logos::Logos;
 mod internal_error;
 use internal_error::{InternalLexerError, lexer_error};
 
+pub trait ILexer<'dcx, 'src>: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>> where 'src: 'dcx {}
+
 fn global_span<'s>(lex: &logos::Lexer<'s, Token<'s>>) -> Span {
     Span::new(lex.extras + lex.span().start as u32, lex.extras + lex.span().end as u32)
 }
@@ -43,6 +45,7 @@ impl<'dcx, 'src> Lexer<'dcx, 'src> {
     }
 }
 
+impl<'dcx, 'src> ILexer<'dcx, 'src> for Lexer<'dcx, 'src> {}
 // transformed for lalrpop
 impl<'dcx, 'src> Iterator for Lexer<'dcx, 'src> {
     type Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>;

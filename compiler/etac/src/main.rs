@@ -1,4 +1,4 @@
-use etac_driver::{CompilationSuccess, CompilationFailure};
+use etac_driver::{CompilationFailure, CompilationSuccess};
 
 const ANSI_BOLD_GREEN: &str = "\x1b[1;32m";
 const ANSI_BOLD_RED: &str = "\x1b[1;31m";

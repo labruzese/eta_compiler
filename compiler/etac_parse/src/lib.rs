@@ -1,6 +1,6 @@
 use etac_ast::{Expr, ExprKind, LValue, LValueKind, NodeIdGen};
 use etac_errors::{etac_error, Diag, DiagCtxt};
-use etac_lexer::Token;
+use etac_lexer::{ILexer, Token};
 use etac_span::Span;
 use lalrpop_util::{lalrpop_mod, ErrorRecovery, ParseError};
 
@@ -60,10 +60,8 @@ pub use grammar::__ToTriple;
 pub trait IParser<'dcx, 'src> {
     type Out;
 
-    fn parse<Lexer>(&mut self, lexer: &mut Lexer) -> Parsed<Self::Out>
-    where
-        Lexer: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>>,
-        'src: 'dcx; 
+    fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> Parsed<Self::Out>
+    where 'src: 'dcx; 
 
     fn errors_mut(&mut self) -> &mut [Diag<'dcx, 'src>];
 
@@ -94,11 +92,8 @@ macro_rules! impl_iparser {
         impl<'dcx, 'src> IParser<'dcx, 'src> for $name<'dcx, 'src> {
             type Out = $out;
 
-           fn parse<Lexer>(&mut self, lexer: &mut Lexer) -> Parsed<Self::Out>
-            where
-                Lexer: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>>,
-                'src: 'dcx
-            {
+            fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> Parsed<Self::Out>
+            where 'src: 'dcx {
                 let parse = <$full>::parse(&<$full>::new(), &mut self.state, lexer);
                 let mut recovered = false;
                 for e in std::mem::take(&mut self.state.lalrpop_errs) {

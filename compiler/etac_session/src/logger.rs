@@ -3,8 +3,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter};
 use std::path::{Path, PathBuf};
 
-mod lex;
-mod parse;
+pub mod lex;
+pub mod parse;
 
 /// Owns the external `--lex` / `--parse` log files and knows how to format each kind of
 /// entry. Phases attach logging in a single call ([`tee`](Logger::tee) for the token
@@ -17,8 +17,8 @@ mod parse;
 /// (e.g. typecheck) is one method here plus one call site.
 pub struct Logger {
     diag_root: PathBuf,
-    lex: bool,
-    parse: bool,
+    pub lex: bool,
+    pub parse: bool,
 }
 
 impl Logger {
