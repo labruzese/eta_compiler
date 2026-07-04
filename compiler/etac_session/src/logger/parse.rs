@@ -17,6 +17,7 @@ pub struct TeeParser<'src, I> {
 impl<'dcx, 'src, InnerParser> IParser<'dcx, 'src> for TeeParser<'src, InnerParser>
 where
     InnerParser: IParser<'dcx, 'src>,
+    InnerParser::Out: std::fmt::Display,
 {
     type Out = InnerParser::Out;
 

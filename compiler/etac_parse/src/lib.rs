@@ -58,7 +58,7 @@ impl<'dcx, 'src> ParseState<'dcx, 'src> {
 pub use grammar::__ToTriple;
 
 pub trait IParser<'dcx, 'src> {
-    type Out: std::fmt::Display;
+    type Out;
 
     fn parse<Lexer>(&mut self, lexer: &mut Lexer) -> Parsed<Self::Out>
     where
