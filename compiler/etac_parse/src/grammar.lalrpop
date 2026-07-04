@@ -33,13 +33,12 @@ CommaTrailing<T>: Vec<T> = {
 				    => vec![],
 }
 
+// Left-recursive (via CommaPlus) with an optional trailing comma. The previous
+// right-recursive formulation grew the LR stack linearly with list length and
+// rebuilt the Vec with insert(0, ..) at every step -- O(n^2) on long array
+// literals.
 CommaTrailingNonEmpty<T>: Vec<T> = {
-    <e:T> "," <mut rest:CommaTrailingNonEmpty<T>> => {
-        rest.insert(0, e);
-	rest
-    },
-    <e:T> ","	=> vec![e],
-    <e:T>	=> vec![e],
+    <v:CommaPlus<T>> ","? => v,
 }
 
 // ---- Token bindings ----
