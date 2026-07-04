@@ -42,7 +42,14 @@ fn open_log(root: &Path, file_name: &str, ext: &str) -> BufWriter<File> {
     let path = if root.eq(&PathBuf::from("-")) {
         PathBuf::from("/dev/stdout")
     } else {
-        root.join(file_name).with_extension(ext)
+        let path = root.join(file_name).with_extension(ext);
+        if let Some(parent) = path.parent() {
+            // Log files mirror the source file's relative path under the
+            // diagnostic root; make sure that subtree exists before opening.
+            std::fs::create_dir_all(parent)
+                .expect("unable to create diagnostic output directory");
+        }
+        path
     };
 
     BufWriter::new(

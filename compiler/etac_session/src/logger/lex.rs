@@ -9,7 +9,8 @@ use crate::logger::Logger;
 /// Token-stream wrapper returned by [`Logger::tee`]. Forwards every item untouched and
 /// logs as a side effect; see that method for the contract.
 pub struct TeeLexer<'src, I> {
-    writer: BufWriter<File>,
+    /// `None` when `--lex` is off: nothing is opened or written.
+    writer: Option<BufWriter<File>>,
     source: &'src SourceCache,
     inner: I,
     stopped: bool,
@@ -24,12 +25,17 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.inner.next()?;
-        if self.stopped { return Some(item); }
+        if self.stopped {
+            return Some(item);
+        }
+        let Some(writer) = self.writer.as_mut() else {
+            return Some(item);
+        };
 
         match &item {
             Ok((start, tok, _end)) => {
                 if let Ok(at) = self.source.lc_index(*start) {
-                    let _ = writeln!(self.writer, "{}:{} {}", at.0, at.1, tok);
+                    let _ = writeln!(writer, "{}:{} {}", at.0, at.1, tok);
                 }
             }
             Err(diag) => {
@@ -37,7 +43,7 @@ where
                     if let Some(loc) = diag.loc.as_ref()
                         && let Ok(at) = self.source.lc_index(loc.lo)
                     {
-                        let _ = writeln!(self.writer, "{}:{} error:{}", at.0, at.1, diag.message);
+                        let _ = writeln!(writer, "{}:{} error:{}", at.0, at.1, diag.message);
                     }
                     self.stopped = true;
                 }
@@ -61,11 +67,13 @@ impl Logger {
         I: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>>,
         'src: 'dcx
     {
-        TeeLexer { 
+        TeeLexer {
             source: sources,
-            writer: super::open_log(&self.diag_root, file.as_str(), ".lexed"),
+            writer: self
+                .lex
+                .then(|| super::open_log(&self.diag_root, file.as_str(), "lexed")),
             inner,
-            stopped: !self.lex
+            stopped: false,
         }
     }
 }

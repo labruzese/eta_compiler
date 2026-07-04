@@ -7,7 +7,8 @@ use std::{fs::File, io::{BufWriter, Write}};
 use crate::logger::Logger;
 
 pub struct TeeParser<'src, I> {
-    writer: BufWriter<File>,
+    /// `None` when `--parse` is off: nothing is opened or written.
+    writer: Option<BufWriter<File>>,
     source: &'src SourceCache,
     inner: I,
     stopped: bool,
@@ -24,11 +25,14 @@ where
         Lexer: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>>,
         'src: 'dcx {
         let result = self.inner.parse(lexer);
-        if self.stopped { return result; }
+        if self.stopped || self.writer.is_none() {
+            return result;
+        }
 
         match result {
             etac_parse::Parsed::Ok(ref out) => {
-                let _ = writeln!(self.writer, "{out}"); 
+                let writer = self.writer.as_mut().expect("checked above");
+                let _ = writeln!(writer, "{out}");
             }
             etac_parse::Parsed::Recovered(_) |
             etac_parse::Parsed::Failed => {
@@ -37,7 +41,8 @@ where
                 if let Some(loc) = diag.loc {
                     let msg = diag.message.clone();
                     if let Ok((line, col)) = self.source.lc_index(loc.lo) {
-                        let _ = writeln!(self.writer, "{line}:{col} error:{msg}");
+                        let writer = self.writer.as_mut().expect("checked above");
+                        let _ = writeln!(writer, "{line}:{col} error:{msg}");
                     }
                 }
                 self.stopped = true;
@@ -73,12 +78,13 @@ impl Logger {
         I: IParser<'dcx, 'src>,
         'src: 'dcx
     {
-        
-        TeeParser { 
+        TeeParser {
             source: sources,
-            writer: super::open_log(&self.diag_root, file.as_str(), ".parsed"),
+            writer: self
+                .parse
+                .then(|| super::open_log(&self.diag_root, file.as_str(), "parsed")),
             inner,
-            stopped: !self.parse 
+            stopped: false,
         }
     }
 }
