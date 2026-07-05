@@ -58,7 +58,7 @@ fn parse_one<'dcx, 'src, P>(
     file: FileId,
     blame: LoadBlame,
     parser: P,
-) -> Result<Option<P::Out>>
+) -> Result<P::Out>
 where
     P: IParser<'dcx, 'src>,
     P::Out: std::fmt::Display,
@@ -78,20 +78,29 @@ where
         _ => compat::UParser::Raw(parser),
     };
 
-    let out = match parser.parse(&mut lexer) {
-        Parsed::Ok(tree) | Parsed::Recovered(tree) => Some(tree),
+    match parser.parse(&mut lexer) {
+        Parsed::Ok(tree) => Ok(tree),
+        Parsed::Recovered(tree) => {
+            let _g: ErrorGuaranteed = parser
+                .into_errors()
+                .into_iter()
+                .map(Diag::emit)
+                .reduce(|_, g| g).expect("parse not to recover with no errors");
+            Ok(tree)
+        },
         Parsed::Failed => {
+            let g: ErrorGuaranteed = parser
+                .into_errors()
+                .into_iter()
+                .map(Diag::emit)
+                .reduce(|_, g| g).expect("parse not to fail with no errors");
+
+            // emit extra lexical errors
             lexer.for_each(|i| {let _ = i.map_err(Diag::emit);});
-            None
+
+            Err(g)
         }
-    };
-
-    parser
-        .into_errors()
-        .into_iter()
-        .for_each(|e| {e.emit();});
-
-    Ok(out)
+    }
 }
 
 /// Runs the compiler with the given flags. Errors are emitted as side effects, returns a result
@@ -107,10 +116,6 @@ pub fn run(flags: &Flags) -> CompilationResult {
     // resolver; see the resolve module.
     let mut resolver = Resolver::new(&flags.source_path, &flags.lib_path);
 
-    // Classify the command-line inputs, keeping their order (deterministic
-    // diagnostics and logs; the previous HashSet iterated in a random order)
-    // and letting the resolver dedup repeats. An unusable path is reported
-    // and skipped — it must not silence diagnostics for the other files.
     let files: Vec<File> = flags
         .source_files
         .iter()
@@ -124,26 +129,33 @@ pub fn run(flags: &Flags) -> CompilationResult {
         match file {
             File::Program(p) => {
                 let pparser = etac_parse::ProgramParser::new(&dcx);
-                let parsed = parse_one(&logger, &cache, &dcx, p, LoadBlame::CommandLine, pparser)
-                    .map_err(|_| CompilationFailure::from(&dcx))?;
-                let Some(program) = parsed else { continue };
-                // uses (the resolver returns None for already-queued
-                // interfaces, so a shared interface is parsed exactly once)
+                let program = match parse_one(&logger, &cache, &dcx, p, LoadBlame::CommandLine, pparser) {
+                    Ok(p) => p,
+                    Err(_g) => continue,
+                };
                 for u in &program.uses {
-                    let Some(i) = resolver.resolve_use(&dcx, p, &u.id.sym, u.span) else {
-                        continue;
+                    let i = match resolver.resolve_use(&dcx, p, &u.id.sym, u.span) {
+                        Ok(Some(i)) => i,
+                        // already included
+                        Ok(None) => continue,
+                        // skip if failure
+                        Err(_guar) => continue,
                     };
                     let iparser = etac_parse::InterfaceParser::new(&dcx);
-                    let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::Use(u.span), iparser);
-                    let Ok(Some(interface)) = parsed else { continue };
+                    let interface = match parse_one(&logger, &cache, &dcx, i, LoadBlame::Use(u.span), iparser) {
+                        Ok(i) => i,
+                        Err(_g) => continue
+                    };
                     interfaces.push(interface);
                 }
                 programs.push(program);
             },
             File::Interface(i) => {
-                let parser = etac_parse::InterfaceParser::new(&dcx);
-                let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::CommandLine, parser);
-                let Ok(Some(interface)) = parsed else { continue };
+                let iparser = etac_parse::InterfaceParser::new(&dcx);
+                let interface = match parse_one(&logger, &cache, &dcx, i, LoadBlame::CommandLine, iparser) {
+                    Ok(i) => i,
+                    Err(_g) => continue
+                };
                 interfaces.push(interface);
             },
         }
