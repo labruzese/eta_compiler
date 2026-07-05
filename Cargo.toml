@@ -5,7 +5,6 @@ default-members = ["compiler/etac"]
 
 [workspace.lints.clippy]
 all = "warn"
-enum_glob_use = "allow"
 
 [workspace.package]
 version = "0.1.0"
