@@ -52,51 +52,54 @@ impl ErrorGuaranteed {
     }
 }
 
-pub(crate) struct Inner<'a> {
-    emitter: Box<dyn Emitter + 'a>,
+pub(crate) struct Inner {
+    emitter: Box<dyn Emitter>,
     err_count: usize,
     warn_count: usize,
 }
 
-/// The single diagnostic sink for a compilation. Borrows the [`SourceCache`] so it can
-/// render spans; shares it with the rest of the compiler (the cache is interior-mutable).
-pub struct DiagCtxt<'a> {
-    pub(crate) sources: &'a SourceCache,
-    pub(crate) inner: RefCell<Inner<'a>>,
+/// The single diagnostic sink for a compilation. Renders spans against the
+/// process-global [`SOURCES`](etac_span::SOURCES) cache, so it carries no
+/// lifetime parameter and neither does anything built on it.
+pub struct DiagCtxt {
+    pub(crate) sources: &'static SourceCache,
+    pub(crate) inner: RefCell<Inner>,
 }
 
-impl<'a> DiagCtxt<'a> {
+impl DiagCtxt {
     /// A context that renders to stderr.
-    pub fn new(sources: &'a SourceCache) -> Self {
-        Self::with_emitter(sources, Box::new(HumanEmitter))
+    #[must_use]
+    pub fn new(cache: &'static SourceCache) -> Self {
+        Self::with_emitter(cache, Box::new(HumanEmitter))
     }
 
     /// A context with a custom sink (e.g. [`BufferEmitter`](crate::BufferEmitter) in tests).
-    pub fn with_emitter(sources: &'a SourceCache, emitter: Box<dyn Emitter + 'a>) -> Self {
+    #[must_use]
+    pub fn with_emitter(cache: &'static SourceCache, emitter: Box<dyn Emitter>) -> Self {
         Self {
-            sources,
+            sources: cache,
             inner: RefCell::new(Inner { emitter, err_count: 0, warn_count: 0 }),
         }
     }
 
-    /// The source cache this context renders against.
+    /// The source cache this context renders against (the process global).
     #[inline]
-    pub fn sources(&self) -> &'a SourceCache {
+    pub fn sources(&self) -> &'static SourceCache {
         self.sources
     }
 
     /// Start building an error at `span`. Must be `.emit()`ed or `.cancel()`ed.
-    pub fn err(&self, span: Span, msg: impl Into<String>) -> Diag<'_, 'a> {
+    pub fn err(&self, span: Span, msg: impl Into<String>) -> Diag<'_> {
         Diag::new(self, Level::Error, span, msg)
     }
 
     /// Start building a location-less error (I/O failures, bad CLI input, …).
-    pub fn err_no_span(&self, msg: impl Into<String>) -> Diag<'_, 'a> {
+    pub fn err_no_span(&self, msg: impl Into<String>) -> Diag<'_> {
         Diag::new_no_span(self, Level::Error, msg)
     }
 
     /// Start building a warning at `span`.
-    pub fn warn(&self, span: Span, msg: impl Into<String>) -> Diag<'_, 'a> {
+    pub fn warn(&self, span: Span, msg: impl Into<String>) -> Diag<'_> {
         Diag::new(self, Level::Warning, span, msg)
     }
 
@@ -121,14 +124,14 @@ impl<'a> DiagCtxt<'a> {
 /// accident. Build, decorate, then finish with [`emit`](Diag::emit) or
 /// [`cancel`](Diag::cancel).
 ///
-/// Two lifetimes: `'dcx` is how long this builder borrows the context, `'src` is the
-/// context's own borrow of the [`SourceCache`]. Keeping them separate is what lets the
-/// context be an ordinary local (`let dcx = DiagCtxt::new(&cache);`) — a single shared
-/// lifetime here would force the borrow of `dcx` to last as long as the cache borrow.
+/// One lifetime: `'dcx` is how long this builder borrows the context. (There used
+/// to be a second, `'src`, for the context's borrow of the [`SourceCache`]; the
+/// cache is now the process-global [`SOURCES`](etac_span::SOURCES), so that borrow
+/// is `'static` and the parameter is gone.)
 #[must_use = "a Diag does nothing until you call `.emit()` (or `.cancel()` it)"]
 #[derive(Debug)]
-pub struct Diag<'dcx, 'src> {
-    pub(crate) dcx: &'dcx DiagCtxt<'src>,
+pub struct Diag<'dcx> {
+    pub(crate) dcx: &'dcx DiagCtxt,
     pub level: Level,
     pub message: String,
     pub loc: Option<Span>,
@@ -138,9 +141,9 @@ pub struct Diag<'dcx, 'src> {
     bomb: DropBomb,
 }
 
-impl<'dcx, 'src> Diag<'dcx, 'src> {
+impl<'dcx> Diag<'dcx> {
     /// Create a new diagnostic at a location with a message.
-    fn new(dcx: &'dcx DiagCtxt<'src>, level: Level, span: Span, message: impl Into<String>) -> Self {
+    fn new(dcx: &'dcx DiagCtxt, level: Level, span: Span, message: impl Into<String>) -> Self {
         Self {
             dcx,
             level,
@@ -154,7 +157,7 @@ impl<'dcx, 'src> Diag<'dcx, 'src> {
     }
 
     /// Create a new diagnostic that doesn't have a location
-    fn new_no_span(dcx: &'dcx DiagCtxt<'src>, level: Level, message: impl Into<String>) -> Self {
+    fn new_no_span(dcx: &'dcx DiagCtxt, level: Level, message: impl Into<String>) -> Self {
         Self {
             dcx,
             level,
@@ -167,7 +170,7 @@ impl<'dcx, 'src> Diag<'dcx, 'src> {
         }
     }
 
-    pub fn io(dcx: &'dcx DiagCtxt<'src>, io_err: &std::io::Error) -> Self {
+    pub fn io(dcx: &'dcx DiagCtxt, io_err: &std::io::Error) -> Self {
         Self::new_no_span(dcx, Level::Error, io_err.to_string())
     }
 
@@ -225,7 +228,13 @@ impl<'dcx, 'src> Diag<'dcx, 'src> {
     pub fn cancel(mut self) { self.bomb.defuse() }
 }
 
-impl fmt::Debug for DiagCtxt<'_> {
+impl Default for DiagCtxt {
+    fn default() -> Self {
+        Self::new(etac_span::sources())
+    }
+}
+
+impl fmt::Debug for DiagCtxt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner = self.inner.borrow();
         f.debug_struct("DiagCtxt")

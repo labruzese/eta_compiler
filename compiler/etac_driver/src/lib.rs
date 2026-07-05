@@ -12,7 +12,7 @@
 use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed, etac_error};
 use etac_parse::{IParser, Parsed};
 use etac_session::{cli::Flags, logger::Logger};
-use etac_span::{FileId, SourceCache, Span};
+use etac_span::{FileId, Span};
 
 pub use crate::resolve::Resolver;
 pub use crate::status::{CompilationFailure, CompilationSuccess};
@@ -23,7 +23,6 @@ mod compat;
 mod resolve;
 mod status;
 
-
 type Result<T> = std::result::Result<T, ErrorGuaranteed>;
 type CompilationResult = std::result::Result<CompilationSuccess, CompilationFailure>;
 
@@ -33,8 +32,8 @@ enum LoadBlame {
     Use(Span),
 }
 
-fn load_file<'src>(cache: &'src SourceCache, dcx: &DiagCtxt<'src>, file: FileId, blame: LoadBlame) -> Result<(u32, &'src str)> {
-    match cache.load(file) {
+fn load_file<'src>(dcx: &DiagCtxt, file: FileId, blame: LoadBlame) -> Result<(u32, &'static str)> {
+    match etac_span::sources().load(file) {
         Ok(loaded) => Ok(loaded),
         Err(ioe) => {
             let guar = match blame {
@@ -53,28 +52,27 @@ fn load_file<'src>(cache: &'src SourceCache, dcx: &DiagCtxt<'src>, file: FileId,
 
 fn parse_one<'dcx, 'src, P>(
     logger: &'dcx Logger,
-    cache: &'src SourceCache,
-    dcx: &'dcx DiagCtxt<'src>,
+    dcx: &'dcx DiagCtxt,
     file: FileId,
     blame: LoadBlame,
     parser: P,
 ) -> Result<P::Out>
 where
-    P: IParser<'dcx, 'src>,
+    P: IParser<'dcx>,
     P::Out: std::fmt::Display,
     'src: 'dcx,
 {
-    let (base, source) = load_file(cache, dcx, file, blame)?;
+    let (base, source) = load_file(dcx, file, blame)?;
 
     let lexer = etac_lexer::Lexer::new(base, source, dcx);
 
     let mut lexer = match (logger.lex, blame) {
-        (true, LoadBlame::CommandLine) => compat::ULexer::Tee(logger.tee_lexer(file, cache, lexer)),
+        (true, LoadBlame::CommandLine) => compat::ULexer::Tee(logger.tee_lexer(file, etac_span::sources(), lexer)),
         _ => compat::ULexer::Raw(lexer),
     };
 
     let mut parser = match (logger.parse, blame) {
-        (true, LoadBlame::CommandLine) => compat::UParser::Tee(logger.tee_parser(file, cache, parser)),
+        (true, LoadBlame::CommandLine) => compat::UParser::Tee(logger.tee_parser(file, etac_span::sources(), parser)),
         _ => compat::UParser::Raw(parser),
     };
 
@@ -108,9 +106,8 @@ where
 /// # Errors 
 /// when the program is not able to be compiled 
 pub fn run(flags: &Flags) -> CompilationResult {
-    let cache = SourceCache::new();
     let logger = Logger::new(flags);
-    let dcx = DiagCtxt::new(&cache);
+    let dcx = DiagCtxt::new(etac_span::sources());
 
     // All name-to-file decisions (sourcepath, libpath, dedup) live in the
     // resolver; see the resolve module.
@@ -129,7 +126,7 @@ pub fn run(flags: &Flags) -> CompilationResult {
         match file {
             File::Program(p) => {
                 let pparser = etac_parse::ProgramParser::new(&dcx);
-                let program = match parse_one(&logger, &cache, &dcx, p, LoadBlame::CommandLine, pparser) {
+                let program = match parse_one(&logger, &dcx, p, LoadBlame::CommandLine, pparser) {
                     Ok(p) => p,
                     Err(_g) => continue,
                 };
@@ -142,7 +139,7 @@ pub fn run(flags: &Flags) -> CompilationResult {
                         Err(_guar) => continue,
                     };
                     let iparser = etac_parse::InterfaceParser::new(&dcx);
-                    let interface = match parse_one(&logger, &cache, &dcx, i, LoadBlame::Use(u.span), iparser) {
+                    let interface = match parse_one(&logger, &dcx, i, LoadBlame::Use(u.span), iparser) {
                         Ok(i) => i,
                         Err(_g) => continue
                     };
@@ -152,7 +149,7 @@ pub fn run(flags: &Flags) -> CompilationResult {
             },
             File::Interface(i) => {
                 let iparser = etac_parse::InterfaceParser::new(&dcx);
-                let interface = match parse_one(&logger, &cache, &dcx, i, LoadBlame::CommandLine, iparser) {
+                let interface = match parse_one(&logger, &dcx, i, LoadBlame::CommandLine, iparser) {
                     Ok(i) => i,
                     Err(_g) => continue
                 };

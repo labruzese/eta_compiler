@@ -6,23 +6,22 @@ use std::{fs::File, io::{BufWriter, Write}};
 
 use crate::logger::Logger;
 
-pub struct TeeParser<'src, I> {
+pub struct TeeParser<I> {
     /// `None` when `--parse` is off: nothing is opened or written.
     writer: Option<BufWriter<File>>,
-    source: &'src SourceCache,
+    source: &'static SourceCache,
     inner: I,
     stopped: bool,
 }
 
-impl<'dcx, 'src, InnerParser> IParser<'dcx, 'src> for TeeParser<'src, InnerParser>
+impl<'dcx, InnerParser> IParser<'dcx> for TeeParser<InnerParser>
 where
-    InnerParser: IParser<'dcx, 'src>,
+    InnerParser: IParser<'dcx>,
     InnerParser::Out: std::fmt::Display,
 {
     type Out = InnerParser::Out;
 
-    fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> etac_parse::Parsed<Self::Out>
-    where 'src: 'dcx {
+    fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> etac_parse::Parsed<Self::Out> {
         let result = self.inner.parse(lexer);
         if self.stopped || self.writer.is_none() {
             return result;
@@ -51,15 +50,15 @@ where
         result
     }
 
-    fn errors_mut(&mut self) -> &mut [Diag<'dcx, 'src>] {
+    fn errors_mut(&mut self) -> &mut [Diag<'dcx>] {
         self.inner.errors_mut()
     }
 
-    fn into_errors(self) -> Vec<Diag<'dcx, 'src>> {
+    fn into_errors(self) -> Vec<Diag<'dcx>> {
         self.inner.into_errors()
     }
 
-    fn diagnostic_context(&self) -> &'dcx etac_errors::DiagCtxt<'src> {
+    fn diagnostic_context(&self) -> &'dcx etac_errors::DiagCtxt {
         self.inner.diagnostic_context()
     }
 }
@@ -72,10 +71,9 @@ impl Logger {
     /// wrapper is a transparent pass-through, so the caller's type doesn't change with the
     /// flag. Per the Eta spec, logging stops at the first lexical error but the tokens
     /// keep flowing to the parser.
-    pub fn tee_parser<'dcx, 'src, I>(&'dcx self, file: FileId, sources: &'src SourceCache, inner: I) -> TeeParser<'src, I>
+    pub fn tee_parser<'dcx, I>(&'dcx self, file: FileId, sources: &'static SourceCache, inner: I) -> TeeParser<I>
     where
-        I: IParser<'dcx, 'src>,
-        'src: 'dcx
+        I: IParser<'dcx>,
     {
         TeeParser {
             source: sources,

@@ -8,19 +8,17 @@ use crate::logger::Logger;
 
 /// Token-stream wrapper returned by [`Logger::tee`]. Forwards every item untouched and
 /// logs as a side effect; see that method for the contract.
-pub struct TeeLexer<'src, I> {
+pub struct TeeLexer<I> {
     /// `None` when `--lex` is off: nothing is opened or written.
     writer: Option<BufWriter<File>>,
-    source: &'src SourceCache,
+    source: &'static SourceCache,
     inner: I,
     stopped: bool,
 }
 
-impl<'dcx, 'src, I: ILexer<'dcx, 'src>> ILexer<'dcx, 'src> for TeeLexer<'src, I> 
-where 'src: 'dcx {}
+impl<'dcx, I: ILexer<'dcx>> ILexer<'dcx> for TeeLexer<I> {}
 
-impl<'dcx, 'src, I: ILexer<'dcx, 'src>> Iterator for TeeLexer<'src, I>
-where 'src: 'dcx {
+impl<'dcx, I: ILexer<'dcx>> Iterator for TeeLexer<I> {
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -62,10 +60,9 @@ impl Logger {
     /// wrapper is a transparent pass-through, so the caller's type doesn't change with the
     /// flag. Per the Eta spec, logging stops at the first lexical error but the tokens
     /// keep flowing to the parser.
-    pub fn tee_lexer<'dcx, 'src, I>(&'dcx self, file: FileId, sources: &'src SourceCache, inner: I) -> TeeLexer<'src, I>
+    pub fn tee_lexer<'dcx, I>(&'dcx self, file: FileId, sources: &'static SourceCache, inner: I) -> TeeLexer<I>
     where
-        I: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>>,
-        'src: 'dcx
+        I: Iterator<Item = Result<(u32, Token<'static>, u32), Diag<'dcx>>>,
     {
         TeeLexer {
             source: sources,

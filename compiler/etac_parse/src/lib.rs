@@ -36,16 +36,16 @@ impl<Out> Parsed<Out> {
 ///
 /// Bundles the [`NodeIdGen`] that hands out node ids with the buffer lalrpop fills
 /// on error recovery, so the grammar carries a single parameter instead of two.
-pub(crate) struct ParseState<'dcx, 'src> {
-    pub diagc: &'dcx DiagCtxt<'src>,
+pub(crate) struct ParseState<'dcx> {
+    pub diagc: &'dcx DiagCtxt,
     pub ids: NodeIdGen,
-    pub lalrpop_errs: Vec<ErrorRecovery<u32, Token<'src>, Diag<'dcx, 'src>>>,
-    pub etac_errs: Vec<Diag<'dcx, 'src>>,
+    pub lalrpop_errs: Vec<ErrorRecovery<u32, Token<'static>, Diag<'dcx>>>,
+    pub etac_errs: Vec<Diag<'dcx>>,
 }
 
-impl<'dcx, 'src> ParseState<'dcx, 'src> {
+impl<'dcx> ParseState<'dcx> {
     #[must_use]
-    pub fn new(diagnostic_context: &'dcx DiagCtxt<'src>) -> Self {
+    pub fn new(diagnostic_context: &'dcx DiagCtxt) -> Self {
         ParseState {
             diagc: diagnostic_context,
             ids: NodeIdGen::default(),
@@ -57,17 +57,16 @@ impl<'dcx, 'src> ParseState<'dcx, 'src> {
 
 pub use grammar::__ToTriple;
 
-pub trait IParser<'dcx, 'src> {
+pub trait IParser<'dcx> {
     type Out;
 
-    fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> Parsed<Self::Out>
-    where 'src: 'dcx; 
+    fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> Parsed<Self::Out>;
 
-    fn errors_mut(&mut self) -> &mut [Diag<'dcx, 'src>];
+    fn errors_mut(&mut self) -> &mut [Diag<'dcx>];
 
-    fn into_errors(self) -> Vec<Diag<'dcx, 'src>>;
+    fn into_errors(self) -> Vec<Diag<'dcx>>;
 
-    fn diagnostic_context(&self) -> &'dcx DiagCtxt<'src>;
+    fn diagnostic_context(&self) -> &'dcx DiagCtxt;
 
 }
 
@@ -82,18 +81,17 @@ macro_rules! impl_iparser {
         impl_iparser!(@inner ($full) ($($rest)::+) $out);
     };
     (@inner ($full:path) ($name:ident) $out:ty) => {
-        pub struct $name<'dcx, 'src> {
-            state: ParseState<'dcx, 'src>
+        pub struct $name<'dcx> {
+            state: ParseState<'dcx>
         }
-        impl<'dcx, 'src> $name<'dcx, 'src> {
+        impl<'dcx> $name<'dcx> {
             #[must_use]
-            pub fn new(diagc: &'dcx DiagCtxt<'src>) -> Self { $name { state: ParseState::new(diagc) } }
+            pub fn new(diagc: &'dcx DiagCtxt) -> Self { $name { state: ParseState::new(diagc) } }
         }
-        impl<'dcx, 'src> IParser<'dcx, 'src> for $name<'dcx, 'src> {
+        impl<'dcx> IParser<'dcx> for $name<'dcx> {
             type Out = $out;
 
-            fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> Parsed<Self::Out>
-            where 'src: 'dcx {
+            fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> Parsed<Self::Out> {
                 let parse = <$full>::parse(&<$full>::new(), &mut self.state, lexer);
                 let mut recovered = false;
                 for e in std::mem::take(&mut self.state.lalrpop_errs) {
@@ -113,15 +111,15 @@ macro_rules! impl_iparser {
                 }
             }
 
-            fn errors_mut(&mut self) -> &mut [Diag<'dcx, 'src>] {
+            fn errors_mut(&mut self) -> &mut [Diag<'dcx>] {
                 &mut self.state.etac_errs
             }
 
-            fn into_errors(self) -> Vec<Diag<'dcx, 'src>> {
+            fn into_errors(self) -> Vec<Diag<'dcx>> {
                 self.state.etac_errs
             }
 
-            fn diagnostic_context(&self) -> &'dcx DiagCtxt<'src> {
+            fn diagnostic_context(&self) -> &'dcx DiagCtxt {
                 &self.state.diagc
             }
         }
@@ -145,10 +143,10 @@ pub(crate) fn lvalue_to_expr(lv: LValue, ids: &mut NodeIdGen) -> Expr {
     Expr::new(ids.fresh(), lv.span, kind)
 }
 
-fn to_diag<'dcx, 'src>(
-    diagc: &'dcx DiagCtxt<'src>,
-    err: ParseError<u32, Token<'src>, Diag<'dcx, 'src>>,
-) -> Diag<'dcx, 'src> {
+fn to_diag<'dcx>(
+    diagc: &'dcx DiagCtxt,
+    err: ParseError<u32, Token<'static>, Diag<'dcx>>,
+) -> Diag<'dcx> {
     use ParseError::*;
     match err {
         User { error } => error,

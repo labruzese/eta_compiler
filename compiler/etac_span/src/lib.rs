@@ -18,11 +18,33 @@
 //! Both the path table behind [`FileId`] and the [`SourceCache`] are `Sync`:
 //! ids and spans minted on one thread mean the same thing on every other, so
 //! parallel per-file frontends can share one cache when the driver grows them.
+//!
+//! The canonical cache is the process-global [`SOURCES`]. Because the map is
+//! append-only *and* the owner lives for the whole process, text borrows from
+//! it are `&'static str` — which is what lets [`DiagCtxt`], the lexer, tokens,
+//! and the parsers exist without a `'src` lifetime parameter.
 
 use ariadne::{Cache, Source};
 use elsa::sync::FrozenMap;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, RwLock};
+
+/// The process-wide [`SourceCache`] backing `'static` text borrows.
+///
+/// One per process, never evicted. A batch compiler retains every loaded file
+/// until exit anyway, so promoting the cache from a `run()` local to a global
+/// changes nothing at runtime — but it caps borrows at `'static` instead of a
+/// stack frame, deleting the `'src` parameter from every borrower. Sharing it
+/// is sound because [`SourceCache`] is `Sync` (asserted at the bottom of this
+/// file); parallel tests and future parallel frontends coexist in the one
+/// global span space.
+static SOURCES: LazyLock<SourceCache> = LazyLock::new(SourceCache::new);
+
+/// The global [`SOURCES`] cache, as the `&'static` borrow everything plumbs.
+#[must_use]
+pub fn sources() -> &'static SourceCache {
+    &SOURCES
+}
 use std::fmt;
 use std::io;
 use std::ops::Range;

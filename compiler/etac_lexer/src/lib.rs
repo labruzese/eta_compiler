@@ -13,7 +13,9 @@ use logos::Logos;
 mod internal_error;
 use internal_error::{InternalLexerError, lexer_error};
 
-pub trait ILexer<'dcx, 'src>: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>> where 'src: 'dcx {}
+/// Tokens borrow from the process-global source cache, so the stream's items carry
+/// only the `'dcx` borrow of the diagnostic context.
+pub trait ILexer<'dcx>: Iterator<Item = Result<(u32, Token<'static>, u32), Diag<'dcx>>> {}
 
 fn global_span<'s>(lex: &logos::Lexer<'s, Token<'s>>) -> Span {
     Span::new(lex.extras + lex.span().start as u32, lex.extras + lex.span().end as u32)
@@ -27,16 +29,20 @@ fn lexer_error<'s>(lex: &mut logos::Lexer<'s, Token<'s>>) -> InternalLexerError 
     }
 }
 
-type LogosLexer<'src> = logos::Lexer<'src, Token<'src>>;
+// The logos derive keeps `Token` generic over its source lifetime (the derive
+// requires it); everything outside this crate instantiates it at `'static`.
+type LogosLexer<'s> = logos::Lexer<'s, Token<'s>>;
 
-pub struct Lexer<'dcx, 'src> {
-    diagc: &'dcx DiagCtxt<'src>,
-    inner: logos::SpannedIter<'src, Token<'src>>,
+pub struct Lexer<'dcx> {
+    diagc: &'dcx DiagCtxt,
+    inner: logos::SpannedIter<'static, Token<'static>>,
 }
 
-impl<'dcx, 'src> Lexer<'dcx, 'src> {
+impl<'dcx> Lexer<'dcx> {
+    /// `source` is `&'static str` because it comes from the global
+    /// [`SourceCache`](etac_span::SOURCES) (typically via `dcx.sources().load(..)`).
     #[must_use]
-    pub fn new(base: u32, source: &'src <Token<'src> as Logos<'src>>::Source, diag_context: &'dcx DiagCtxt<'src>) -> Self
+    pub fn new(base: u32, source: &'static str, diag_context: &'dcx DiagCtxt) -> Self
     {
         Self { 
             diagc: diag_context,
@@ -45,10 +51,10 @@ impl<'dcx, 'src> Lexer<'dcx, 'src> {
     }
 }
 
-impl<'dcx, 'src> ILexer<'dcx, 'src> for Lexer<'dcx, 'src> {}
+impl<'dcx> ILexer<'dcx> for Lexer<'dcx> {}
 // transformed for lalrpop
-impl<'dcx, 'src> Iterator for Lexer<'dcx, 'src> {
-    type Item = Result<(u32, Token<'src>, u32), Diag<'dcx, 'src>>;
+impl<'dcx> Iterator for Lexer<'dcx> {
+    type Item = Result<(u32, Token<'static>, u32), Diag<'dcx>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (next, local_span) = self.inner.next()?;

@@ -62,7 +62,7 @@ impl Resolver {
     ///
     /// `None` means skip: the path was unusable (non-UTF8 name or unknown
     /// extension; reported) or names a file that is already queued (silent).
-    pub fn classify_cli(&mut self, dcx: &DiagCtxt<'_>, path: &Path) -> Option<File> {
+    pub fn classify_cli(&mut self, dcx: &DiagCtxt, path: &Path) -> Option<File> {
         let path = resolve_against(&self.source_path, path);
         let Some(path_str) = path.to_str() else {
             dcx.err_no_span(format!("non-UTF8 file name {}", path.to_string_lossy()))
@@ -97,7 +97,7 @@ impl Resolver {
     /// `None` means the interface is already queued. 
     pub fn resolve_use(
         &mut self,
-        dcx: &DiagCtxt<'_>,
+        dcx: &DiagCtxt,
         from: SourceId,
         name: &str,
         at: Span,
@@ -149,15 +149,13 @@ fn resolve_against(root: &Path, path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use etac_errors::{BufferEmitter, Level, RecordedDiag};
-    use etac_span::SourceCache;
 
     /// Run `f` with a context whose diagnostics are captured instead of
     /// printed, returning whatever it produced plus the recorded diagnostics.
-    fn with_dcx<T>(f: impl FnOnce(&DiagCtxt<'_>) -> T) -> (T, Vec<RecordedDiag>) {
-        let cache = SourceCache::new();
+    fn with_dcx<T>(f: impl FnOnce(&DiagCtxt) -> T) -> (T, Vec<RecordedDiag>) {
         let buf = BufferEmitter::new();
         let out = {
-            let dcx = DiagCtxt::with_emitter(&cache, Box::new(buf.clone()));
+            let dcx = DiagCtxt::with_emitter(etac_span::sources(), Box::new(buf.clone()));
             f(&dcx)
         };
         (out, buf.take())

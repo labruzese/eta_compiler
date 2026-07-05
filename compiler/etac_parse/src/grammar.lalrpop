@@ -5,7 +5,7 @@ use etac_lexer::Token;
 use etac_span::Span;
 use crate::{ParseState, lvalue_to_expr};
 
-grammar<'dcx, 'src>(state: &mut ParseState<'dcx, 'src>);
+grammar<'dcx>(state: &mut ParseState<'dcx>);
 
 // Error-recovery contract: every `<e:!>` production below pushes the recovery
 // onto `state.lalrpop_errs` *before* building its `*Kind::Error` node; `parse()`
@@ -44,9 +44,9 @@ CommaTrailingNonEmpty<T>: Vec<T> = {
 // ---- Token bindings ----
 extern {
     type Location = u32;
-    type Error = Diag<'dcx, 'src>;
+    type Error = Diag<'dcx>;
 
-    enum Token<'src> {
+    enum Token<'static> {
         "use"     => Token::KeywordUse,
         "length"  => Token::KeywordLength,
         "while"   => Token::KeywordWhile,
@@ -88,7 +88,7 @@ extern {
         "boollit" => Token::BoolLiteral(<bool>),
         "charlit" => Token::CharLiteral(<u32>),
         "strlit"  => Token::StrLiteral(<String>),
-        "ident"   => Token::Identifier(<&'src str>),
+        "ident"   => Token::Identifier(<&'static str>),
         "intlit"  => Token::Integer(<u64>),
     }
 }

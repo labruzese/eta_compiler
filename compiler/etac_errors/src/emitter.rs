@@ -18,7 +18,7 @@ use crate::{Diag, Level};
 /// it needs (the level, for counting) before handing it over, so an emitter is free to
 /// consume the payload without cloning.
 pub trait Emitter {
-    fn emit<'dcx, 'src>(&mut self, diag: Diag<'dcx, 'src>);
+    fn emit(&mut self, diag: Diag<'_>);
 }
 
 /// Renders diagnostics to stderr with source snippets via `ariadne`.
@@ -26,7 +26,7 @@ pub trait Emitter {
 pub struct HumanEmitter;
 
 impl Emitter for HumanEmitter {
-    fn emit<'dcx, 'src>(&mut self, diag: Diag<'dcx, 'src>) {
+    fn emit(&mut self, diag: Diag<'_>) {
         let kind = match diag.level {
             Level::Error => ReportKind::Error,
             Level::Warning => ReportKind::Warning,
@@ -117,7 +117,7 @@ pub struct RecordedDiag {
 }
 
 impl Emitter for BufferEmitter {
-    fn emit(&mut self, diag: Diag<'_, '_>) {
+    fn emit(&mut self, diag: Diag<'_>) {
         let rd = RecordedDiag {
             level: diag.level,
             message: diag.message,
