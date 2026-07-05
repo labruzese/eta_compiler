@@ -152,18 +152,16 @@ pub fn run(flags: &Flags) -> CompilationResult {
                 for u in &program.uses {
                     let i = find_use_interface(p, &u.id.sym);
                     let iparser = etac_parse::InterfaceParser::new(&dcx);
-                    let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::Use(u.span), iparser)
-                        .map_err(|_| CompilationFailure::from(&dcx))?;
-                    let Some(interface) = parsed else { continue };
+                    let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::Use(u.span), iparser);
+                    let Ok(Some(interface)) = parsed else { continue };
                     interfaces.push(interface);
                 }
                 programs.push(program);
             },
             File::Interface(i) => {
                 let parser = etac_parse::InterfaceParser::new(&dcx);
-                let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::CommandLine, parser)
-                    .map_err(|_| CompilationFailure::from(&dcx))?;
-                let Some(interface) = parsed else { continue };
+                let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::CommandLine, parser);
+                let Ok(Some(interface)) = parsed else { continue };
                 interfaces.push(interface);
             },
         }
