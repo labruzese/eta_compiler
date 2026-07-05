@@ -9,17 +9,18 @@
 //! [`Logger::log_syntax_error`] for parse output) — the driver pipes data through and
 //! decides control flow, nothing more.
 
-use std::collections::HashSet;
-use std::path::Path;
-
 use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed, etac_error};
 use etac_parse::{IParser, Parsed};
 use etac_session::{cli::Flags, logger::Logger};
-use etac_span::{FileId, InterfaceId, SourceCache, SourceId, Span};
+use etac_span::{FileId, SourceCache, Span};
 
+pub use crate::resolve::Resolver;
 pub use crate::status::{CompilationFailure, CompilationSuccess};
 
+use crate::resolve::File;
+
 mod compat;
+mod resolve;
 mod status;
 
 
@@ -30,32 +31,6 @@ type CompilationResult = std::result::Result<CompilationSuccess, CompilationFail
 enum LoadBlame {
     CommandLine,
     Use(Span),
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-enum File {
-    Program(SourceId),
-    Interface(InterfaceId),
-}
-
-fn parse_path(dcx: &DiagCtxt<'_>, file: &Path) -> Result<File> {
-    let Some(file_str) = file.to_str() else {
-        return Err(dcx.err_no_span(format!("non-UTF8 file name {}", file.to_string_lossy())).emit());
-    };
-
-    match file.extension().and_then(|x| x.to_str()) {
-        Some("eta") => Ok(File::Program(SourceId::new(file_str))),
-        Some("eti") => Ok(File::Interface(InterfaceId::new(file_str))),
-        ext => Err(dcx.err_no_span(format!("unknown file type {}", ext.unwrap_or(""))).emit()),
-    }
-}
-
-fn find_use_interface(me: SourceId, sym: &str) -> InterfaceId {
-    let dir = Path::new(me.as_str())
-        .parent()
-        .unwrap_or_else(|| Path::new(""));
-    let path = dir.join(format!("{sym}.eti"));
-    InterfaceId::new(path.to_string_lossy())
 }
 
 fn load_file<'src>(cache: &'src SourceCache, dcx: &DiagCtxt<'src>, file: FileId, blame: LoadBlame) -> Result<(u32, &'src str)> {
@@ -128,15 +103,19 @@ pub fn run(flags: &Flags) -> CompilationResult {
     let logger = Logger::new(flags);
     let dcx = DiagCtxt::new(&cache);
 
-    let mut files: HashSet<File> = HashSet::new();
+    // All name-to-file decisions (sourcepath, libpath, dedup) live in the
+    // resolver; see the resolve module.
+    let mut resolver = Resolver::new(&flags.source_path, &flags.lib_path);
 
-    // decode paths for all the files passed in `flags`
-    // exits with `Err` on a failure to parse path but doesn't check existance
-    for file in &flags.source_files {
-        let id = parse_path(&dcx, file.as_path())
-            .map_err(|_| CompilationFailure::from(&dcx))?;
-        files.insert(id);
-    }
+    // Classify the command-line inputs, keeping their order (deterministic
+    // diagnostics and logs; the previous HashSet iterated in a random order)
+    // and letting the resolver dedup repeats. An unusable path is reported
+    // and skipped — it must not silence diagnostics for the other files.
+    let files: Vec<File> = flags
+        .source_files
+        .iter()
+        .filter_map(|file| resolver.classify_cli(&dcx, file))
+        .collect();
 
     let mut programs = Vec::new();
     let mut interfaces = Vec::new();
@@ -148,9 +127,12 @@ pub fn run(flags: &Flags) -> CompilationResult {
                 let parsed = parse_one(&logger, &cache, &dcx, p, LoadBlame::CommandLine, pparser)
                     .map_err(|_| CompilationFailure::from(&dcx))?;
                 let Some(program) = parsed else { continue };
-                // uses
+                // uses (the resolver returns None for already-queued
+                // interfaces, so a shared interface is parsed exactly once)
                 for u in &program.uses {
-                    let i = find_use_interface(p, &u.id.sym);
+                    let Some(i) = resolver.resolve_use(&dcx, p, &u.id.sym, u.span) else {
+                        continue;
+                    };
                     let iparser = etac_parse::InterfaceParser::new(&dcx);
                     let parsed = parse_one(&logger, &cache, &dcx, i, LoadBlame::Use(u.span), iparser);
                     let Ok(Some(interface)) = parsed else { continue };

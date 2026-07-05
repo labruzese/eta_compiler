@@ -13,6 +13,9 @@ etac_session.workspace = true
 etac_span.workspace    = true
 log.workspace          = true
 
+[dev-dependencies]
+tempfile.workspace     = true
+
 
 [lints]
 workspace = true
