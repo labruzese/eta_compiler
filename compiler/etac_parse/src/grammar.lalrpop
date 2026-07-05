@@ -1,17 +1,17 @@
 use either::Either;
 use etac_ast::*;
-use etac_errors::{etac_error, Diag, ErrorGuaranteed};
+use etac_errors::{etac_error, Diag};
 use etac_lexer::Token;
 use etac_span::Span;
 use crate::{ParseState, lvalue_to_expr};
 
 grammar<'dcx, 'src>(state: &mut ParseState<'dcx, 'src>);
 
-// Error-recovery contract: the `<e:!>` productions below build `*Kind::Error`
-// nodes carrying `ErrorGuaranteed::claim_already_emitted()`. That claim is honest
-// because `parse()` drains `state.errors` and emits every recovered error through
-// the diagnostic context before the tree reaches any later pass -- so by the time
-// anything observes an `Error` node, its diagnostic has already reached the user.
+// Error-recovery contract: every `<e:!>` production below pushes the recovery
+// onto `state.lalrpop_errs` *before* building its `*Kind::Error` node; `parse()`
+// converts and retains those diagnostics and the driver emits them. So by the
+// time any later pass observes an `Error` node, its diagnostic has reached the
+// user -- upheld by the drop-bomb on `Diag`, not by a token in the tree.
 
 // ---- macros ----
 
@@ -139,7 +139,7 @@ InterfaceItem: InterfaceItem = {
 	InterfaceItem::new(
 	    state.ids.fresh(),
 	    Span::new(l, r),
-	    InterfaceItemKind::Error(ErrorGuaranteed::claim_already_emitted())
+	    InterfaceItemKind::Error
 	)
     }
 }
@@ -164,7 +164,7 @@ Definition: Definition = {
 	Definition::new(
 	    state.ids.fresh(),
 	    Span::new(l, r),
-	    DefinitionKind::Error(ErrorGuaranteed::claim_already_emitted())
+	    DefinitionKind::Error
 	)
     }
 }
@@ -185,7 +185,7 @@ Method: Method = {
 	state.lalrpop_errs.push(e);
 	let MethodDecl { id, params, ret_types, .. } = decl;
 	let bspan = Span::new(bl, r);
-	let err = Stmt::new(state.ids.fresh(), bspan, StmtKind::Error(ErrorGuaranteed::claim_already_emitted()));
+	let err = Stmt::new(state.ids.fresh(), bspan, StmtKind::Error);
 	let body = Block::new(state.ids.fresh(), bspan, vec![err]);
 	Method::new(state.ids.fresh(), Span::new(l, r), id, params, ret_types, body)
     },
@@ -287,7 +287,7 @@ Stmt: Stmt = {
     StmtClosed,
     <l:@L> <e:!> <r:@R> => {
 	state.lalrpop_errs.push(e);
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Error(ErrorGuaranteed::claim_already_emitted()))
+	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Error)
     }
 }
 
@@ -493,7 +493,7 @@ Expr: Expr = {
     #[precedence(level="8")]
     <l:@L> <e:!> <r:@R> => {
 	state.lalrpop_errs.push(e);
-	Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Error(ErrorGuaranteed::claim_already_emitted()))
+	Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Error)
     }
 }
 

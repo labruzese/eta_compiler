@@ -86,7 +86,7 @@ impl ToDoc for InterfaceItem {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match &self.kind {
             InterfaceItemKind::Decl(d) => d.to_doc(),
-            InterfaceItemKind::Error(_) => d!("Error"),
+            InterfaceItemKind::Error => d!("Error"),
         }
     }
 }
@@ -102,7 +102,7 @@ impl ToDoc for Definition {
         match &self.kind {
             DefinitionKind::Method(m) => m.to_doc(),
             DefinitionKind::GlobDecl(g) => g.to_doc(),
-            DefinitionKind::Error(_) => d!("Error"),
+            DefinitionKind::Error => d!("Error"),
         }
     }
 }
@@ -195,7 +195,7 @@ impl ToDoc for Stmt {
             StmtKind::Call(p) => p.to_doc(),
             StmtKind::Block(b) => b.to_doc(),
             StmtKind::Decls(decls) => RcDoc::intersperse(docs!(decls), Doc::line()).group(),
-            StmtKind::Error(_) => d!("Error"),
+            StmtKind::Error => d!("Error"),
         }
     }
 }
@@ -238,7 +238,7 @@ impl ToDoc for Expr {
             ExprKind::Length(e) => parens([d!("length"), e.to_doc()]),
             ExprKind::Unary { op, operand } => parens([d!(@op.node), operand.to_doc()]),
             ExprKind::Binary { op, lhs, rhs } => parens([d!(@op.node), lhs.to_doc(), rhs.to_doc()]),
-            ExprKind::Error(_) => d!("Error"),
+            ExprKind::Error => d!("Error"),
         }
     }
 }

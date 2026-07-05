@@ -5,14 +5,16 @@
 //!    `*Kind` enum owns the shape. Carriers get ids; leaf kinds do not.
 //!  * `Spanned<T>` wraps small things that need a location but don't earn a
 //!    full node (operators, etc.) instead of a parallel `_span` field.
-//!  * `Error` variants carry an `ErrorGuaranteed`, so an error node can only be
-//!    built once a diagnostic for it is guaranteed to reach the user.
+//!  * `Error` variants mark recovered regions. The parser only builds one after
+//!    recording the recovery's diagnostic, but the variant itself carries no
+//!    proof of that -- the drop-bomb on `Diag` is what guards against a lost
+//!    diagnostic. (If a type-level proof pulls its weight anywhere, it is in
+//!    typechecking, where `ErrorGuaranteed` may return.)
 //!  * Plain `pub` fields, not accessors — the AST exists to be taken apart.
 //!  * Node ids are handed out by a `NodeIdGen` threaded through the parser
 //!    (deterministic, resettable), not a process-global atomic.
 
 use etac_span::Span;
-use etac_errors::ErrorGuaranteed;
 
 mod printer;
 
@@ -163,7 +165,7 @@ opaque! {
     DefinitionKind {
         Method(Method),
         GlobDecl(GlobDecl),
-        Error(ErrorGuaranteed),
+        Error,
     }
 }
 
@@ -176,7 +178,7 @@ concrete! {
 opaque! {
     InterfaceItemKind {
         Decl(MethodDecl),
-        Error(ErrorGuaranteed),
+        Error,
     }
 }
 
@@ -277,7 +279,7 @@ opaque! {
         Call(ProcCall),
         Block(Block),
         Decls(Vec<Decl>),
-        Error(ErrorGuaranteed),
+        Error,
     }
 }
 
@@ -334,7 +336,7 @@ opaque! {
         Length(Box<Expr>),
         Unary { op: Spanned<UOp>, operand: Box<Expr> },
         Binary { op: Spanned<BinOp>, lhs: Box<Expr>, rhs: Box<Expr> },
-        Error(ErrorGuaranteed),
+        Error,
     }
 }
 
