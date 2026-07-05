@@ -239,7 +239,7 @@ mod tests {
 
         let mut r = Resolver::new(Path::new("."), lib.path());
         let (iid, diags) = with_dcx(|dcx| r.resolve_use(dcx, from, "io", Span::DUMMY));
-        assert!(iid.is_ok() && iid.unwrap().is_none());
+        assert!(iid.is_err());
         assert_eq!(error_count(&diags), 1);
         assert!(diags[0].message.contains("cannot find interface `io`"));
         let note = diags[0].note.as_deref().expect("searched list");
