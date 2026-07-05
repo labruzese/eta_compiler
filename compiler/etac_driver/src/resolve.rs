@@ -1,26 +1,14 @@
-//! Path resolution: the single owner of "which file does this name mean".
+//! Path resolution
 //!
 //! Everything that turns a user-facing name into a [`FileId`] lives here:
 //!
-//! * command-line paths → classified [`File`]s, with relative paths resolved
+//! * command-line paths -> classified [`File`]s, with relative paths resolved
 //!   against `--sourcepath`;
-//! * `use F` declarations → `F.eti` (spec section 8), searched next to the
+//! * `use F` declarations -> `F.eti`, searched next to the
 //!   using source file first and then under `--libpath`;
-//! * deduplication across *all* entry points, so a file reached twice — two
-//!   `use`s, a `use` plus a command-line mention, a repeated argument — is
-//!   compiled exactly once. The spec explicitly permits referencing the same
-//!   interface more than once; without the shared seen-set that meant parsing
-//!   it (and reporting its errors) more than once.
+//! * interface deduplication
 //!
-//! The driver never touches [`Path`] logic directly; it hands names in and
-//! gets ids out. Failures are reported here too (through the [`DiagCtxt`]), so
-//! callers only ever see `Option`: `None` always means "skip, and the user
-//! already knows why" — either the failure was just reported, or the file is
-//! already queued and skipping is the correct, silent thing to do.
-//!
-//! Interfaces cannot themselves contain `use` declarations (the grammar gives
-//! interfaces no use-list), so resolution is a flat pass rather than a
-//! transitive worklist.
+//! Failures are reported here.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

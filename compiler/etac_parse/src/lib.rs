@@ -8,9 +8,7 @@ lalrpop_mod!(grammar);
 
 /// Outcome of a parse. Every diagnostic has already been emitted through the
 /// [`DiagCtxt`] by the time this is returned — the caller never receives a `Vec` of
-/// diagnostics to drain. The retained `first_error` exists only so the `.parsed` log
-/// can record the first syntactic error for a file, and the [`ErrorGuaranteed`] is the
-/// proof that the failure was reported.
+/// diagnostics to drain. 
 #[derive(Debug)]
 pub enum Parsed<Out> {
     /// Parsed cleanly, no errors.
@@ -129,7 +127,6 @@ macro_rules! impl_iparser {
 impl_iparser! {grammar::ProgramParser, etac_ast::Program}
 impl_iparser! {grammar::InterfaceParser, etac_ast::Interface}
 
-
 /// Reinterpret a parsed [`LValue`] as the equivalent [`Expr`], minting fresh ids for
 /// the rebuilt carrier. The AST models the array operand of an indexed lvalue
 /// (`a[i]`) as an `Expr`, so the grammar funnels the accumulated base through here
@@ -143,6 +140,7 @@ pub(crate) fn lvalue_to_expr(lv: LValue, ids: &mut NodeIdGen) -> Expr {
     Expr::new(ids.fresh(), lv.span, kind)
 }
 
+/// LALRPOP error to [`Diag`]
 fn to_diag<'dcx>(
     diagc: &'dcx DiagCtxt,
     err: ParseError<u32, Token<'static>, Diag<'dcx>>,

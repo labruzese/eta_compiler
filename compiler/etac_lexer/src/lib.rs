@@ -13,8 +13,6 @@ use logos::Logos;
 mod internal_error;
 use internal_error::{InternalLexerError, lexer_error};
 
-/// Tokens borrow from the process-global source cache, so the stream's items carry
-/// only the `'dcx` borrow of the diagnostic context.
 pub trait ILexer<'dcx>: Iterator<Item = Result<(u32, Token<'static>, u32), Diag<'dcx>>> {}
 
 fn global_span<'s>(lex: &logos::Lexer<'s, Token<'s>>) -> Span {
@@ -29,8 +27,6 @@ fn lexer_error<'s>(lex: &mut logos::Lexer<'s, Token<'s>>) -> InternalLexerError 
     }
 }
 
-// The logos derive keeps `Token` generic over its source lifetime (the derive
-// requires it); everything outside this crate instantiates it at `'static`.
 type LogosLexer<'s> = logos::Lexer<'s, Token<'s>>;
 
 pub struct Lexer<'dcx> {
@@ -39,8 +35,6 @@ pub struct Lexer<'dcx> {
 }
 
 impl<'dcx> Lexer<'dcx> {
-    /// `source` is `&'static str` because it comes from the global
-    /// [`SourceCache`](etac_span::SOURCES) (typically via `dcx.sources().load(..)`).
     #[must_use]
     pub fn new(base: u32, source: &'static str, diag_context: &'dcx DiagCtxt) -> Self
     {

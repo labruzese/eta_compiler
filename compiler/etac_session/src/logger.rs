@@ -7,14 +7,11 @@ pub mod lex;
 pub mod parse;
 
 /// Owns the external `--lex` / `--parse` log files and knows how to format each kind of
-/// entry. Phases attach logging in a single call ([`tee`](Logger::tee) for the token
-/// stream, [`log_tree`](Logger::log_tree) / [`log_syntax_error`](Logger::log_syntax_error)
-/// for parse output) and never format log lines themselves.
-///
+/// entry. Attach logging by tee'ing a phase
+/// 
 /// Logging is best-effort: whether a phase is being logged is decided here (from the
 /// flags captured at construction), and I/O failures writing a log are swallowed rather
-/// than perturbing the token stream or aborting compilation. Adding a new logged phase
-/// (e.g. typecheck) is one method here plus one call site.
+/// than ruining the token stream or aborting compilation.
 pub struct Logger {
     diag_root: PathBuf,
     pub lex: bool,

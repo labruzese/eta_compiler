@@ -1,13 +1,7 @@
 //! The driver for the compiler
 //!
-//! Is responsible for passing input between each phase and attaching the
-//! --lex, --parse, etc. loggers to each phase.
-//!
-//! Every diagnostic in the pipeline flows through a single [`DiagCtxt`] created here; the
-//! driver never collects a `Vec<Diagnostic>` to drain. Logging is attached in one call
-//! per phase ([`Logger::tee`] for the token stream, [`Logger::log_tree`] /
-//! [`Logger::log_syntax_error`] for parse output) — the driver pipes data through and
-//! decides control flow, nothing more.
+//! Passes input between each phase and attches loggers.
+//! Currently also does file resolution / lookup.
 
 use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed, etac_error};
 use etac_parse::{IParser, Parsed};
@@ -32,7 +26,7 @@ enum LoadBlame {
     Use(Span),
 }
 
-fn load_file<'src>(dcx: &DiagCtxt, file: FileId, blame: LoadBlame) -> Result<(u32, &'static str)> {
+fn load_file(dcx: &DiagCtxt, file: FileId, blame: LoadBlame) -> Result<(u32, &'static str)> {
     match etac_span::sources().load(file) {
         Ok(loaded) => Ok(loaded),
         Err(ioe) => {
@@ -101,16 +95,10 @@ where
     }
 }
 
-/// Runs the compiler with the given flags. Errors are emitted as side effects, returns a result
-/// that indicates whether or not the program was able to compile
-/// # Errors 
-/// when the program is not able to be compiled 
 pub fn run(flags: &Flags) -> CompilationResult {
     let logger = Logger::new(flags);
     let dcx = DiagCtxt::new(etac_span::sources());
 
-    // All name-to-file decisions (sourcepath, libpath, dedup) live in the
-    // resolver; see the resolve module.
     let mut resolver = Resolver::new(&flags.source_path, &flags.lib_path);
 
     let files: Vec<File> = flags

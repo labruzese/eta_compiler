@@ -1,10 +1,8 @@
 //! Diagnostic sinks.
 //!
 //! An [`Emitter`] is the *only* thing that turns a [`Diagnostic`] into output. The
-//! [`DiagCtxt`](crate::DiagCtxt) owns one and routes every diagnostic through it, so
-//! swapping the sink (human-readable stderr, an in-memory buffer for tests, JSON later)
-//! is a one-line change and never touches call sites.
-//!
+//! [`DiagCtxt`](crate::DiagCtxt) owns one and routes every diagnostic through it
+
 use std::{cell::RefCell, convert::Infallible, rc::Rc};
 
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
@@ -12,11 +10,7 @@ use etac_span::Span;
 
 use crate::{Diag, Level};
 
-/// The single point at which a diagnostic becomes output.
-///
-/// Takes the diagnostic *by value*: the [`DiagCtxt`](crate::DiagCtxt) reads everything
-/// it needs (the level, for counting) before handing it over, so an emitter is free to
-/// consume the payload without cloning.
+/// Can take ownership of a diagnostic to emit it
 pub trait Emitter {
     fn emit(&mut self, diag: Diag<'_>);
 }

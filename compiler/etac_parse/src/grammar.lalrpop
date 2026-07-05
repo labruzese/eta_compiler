@@ -7,36 +7,23 @@ use crate::{ParseState, lvalue_to_expr};
 
 grammar<'dcx>(state: &mut ParseState<'dcx>);
 
-// Error-recovery contract: every `<e:!>` production below pushes the recovery
-// onto `state.lalrpop_errs` *before* building its `*Kind::Error` node; `parse()`
-// converts and retains those diagnostics and the driver emits them. So by the
-// time any later pass observes an `Error` node, its diagnostic has reached the
-// user -- upheld by the drop-bomb on `Diag`, not by a token in the tree.
-
 // ---- macros ----
 
-// One or more T separated by `,`, NO trailing comma.
 CommaPlus<T>: Vec<T> = {
     <e:T>				=> vec![e],
     <mut v:CommaPlus<T>> "," <e:T>	=> { v.push(e); v },
 }
 
-// Zero or more T separated by `,`, NO trailing comma.
 Comma<T>: Vec<T> = {
     <v:CommaPlus<T>>	=> v,
                         => vec![],
 }
 
-// Zero or more T separated by `,`, trailing comma permitted.
 CommaTrailing<T>: Vec<T> = {
     <v:CommaTrailingNonEmpty<T>>    => v,
 				    => vec![],
 }
 
-// Left-recursive (via CommaPlus) with an optional trailing comma. Left recursion
-// keeps the LR stack and Vec building linear in list length; a right-recursive
-// form would be O(n^2) on long array literals (linear stack growth plus an
-// insert(0, ..) per element).
 CommaTrailingNonEmpty<T>: Vec<T> = {
     <v:CommaPlus<T>> ","? => v,
 }
@@ -268,9 +255,6 @@ BaseType: Type = {
 
 // ----- Blocks -----
 
-// Any block may end with a single return statement (which `Stmt` itself
-// excludes, so `return` can only ever be the last statement of its
-// immediately enclosing block).
 Block: Block = {
     <l:@L> "{" <mut stmts:(<Stmt> ";"?)*> <ret:ReturnStmtNode?> "}" <r:@R> => {
 	if let Some(ret) = ret { stmts.push(ret); }
@@ -281,7 +265,6 @@ Block: Block = {
 
 // ---- Statements (General and Control Flow) ----
 
-// return *not* in this non-terminal
 Stmt: Stmt = {
     StmtOpen,
     StmtClosed,
