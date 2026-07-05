@@ -8,17 +8,21 @@
 //!
 //! The space is addressed with `u32`, capping total loaded source at 4 GiB.
 //!
-//! The cache is append-only: files are inserted into an [`elsa::FrozenMap`] and
-//! never mutated or removed, so [`SourceCache::load`] can hand out `&str`
+//! The cache is append-only: files are inserted into an [`elsa::sync::FrozenMap`]
+//! and never mutated or removed, so [`SourceCache::load`] can hand out `&str`
 //! borrows tied to `&self` while later loads keep appending. Crucially,
 //! [`SourceCache`] carries **no lifetime parameter** — borrowers (the lexer,
 //! [`DiagCtxt`], ASTs) all borrow *from* the cache with their own ordinary
 //! lifetimes, rather than the cache borrowing from itself.
+//!
+//! Both the path table behind [`FileId`] and the [`SourceCache`] are `Sync`:
+//! ids and spans minted on one thread mean the same thing on every other, so
+//! parallel per-file frontends can share one cache when the driver grows them.
 
 use ariadne::{Cache, Source};
-use elsa::FrozenMap;
-use std::cell::{Cell, RefCell};
+use elsa::sync::FrozenMap;
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, RwLock};
 use std::fmt;
 use std::io;
 use std::ops::Range;
@@ -36,13 +40,14 @@ pub type SourceId = FileId;
 /// file containing an interface
 pub type InterfaceId = FileId;
 
-thread_local! {
-    /// Interned file paths, one entry per distinct path seen this run. Never
-    /// cleared, and entries are leaked to `'static` so a [`FileId`] can return its
-    /// path as a plain `&str`. A compilation names only a handful of files, so the
-    /// table stays small and lives as long as the process.
-    static FILE_NAMES: RefCell<FileNames> = RefCell::new(FileNames::default());
-}
+/// Interned file paths, one entry per distinct path seen this run. Process-global
+/// rather than thread-local so a [`FileId`] minted on one thread resolves to the
+/// same path on every other — a prerequisite for parallel per-file frontends.
+/// Never cleared, and entries are leaked to `'static` so a [`FileId`] can return
+/// its path as a plain `&str`. A compilation names only a handful of files, so
+/// the table stays small and lives as long as the process.
+static FILE_NAMES: LazyLock<RwLock<FileNames>> =
+    LazyLock::new(|| RwLock::new(FileNames::default()));
 
 #[derive(Default)]
 struct FileNames {
@@ -66,12 +71,18 @@ impl FileNames {
 
 impl FileId {
     pub fn new(name: impl AsRef<str>) -> Self {
-        FileId(FILE_NAMES.with(|t| t.borrow_mut().intern(name.as_ref())))
+        FileId(
+            FILE_NAMES
+                .write()
+                .expect("file-name table poisoned")
+                .intern(name.as_ref()),
+        )
     }
 
     #[must_use]
     pub fn as_str(&self) -> &'static str {
-        FILE_NAMES.with(|t| t.borrow().by_index[self.0 as usize])
+        // Entries are leaked to `'static`, so the borrow may outlive the guard.
+        FILE_NAMES.read().expect("file-name table poisoned").by_index[self.0 as usize]
     }
 }
 
@@ -156,13 +167,21 @@ impl CachedSource {
 /// entry is boxed.
 pub struct SourceCache {
     /// Append-only. `FrozenMap::get`/`insert` take `&self` and return references
-    /// that remain valid for the life of the cache.
+    /// that remain valid for the life of the cache; the `sync` variant keeps that
+    /// contract across threads.
     files: FrozenMap<FileId, Box<CachedSource>>,
-    /// `(base, id)` kept sorted ascending by base (bases are handed out in
-    /// order), so `file_for` can binary-search. Borrows never escape the
-    /// `RefCell`, values are copied out.
-    index: RefCell<Vec<(u32, FileId)>>,
-    next_base: Cell<u32>,
+    /// The base-offset allocator and the span index, guarded together so that
+    /// assigning a base, recording it, and inserting the file stays one atomic
+    /// step under concurrent `load`s. `entries` is `(base, id)`, ascending by
+    /// base (bases are handed out in order), so `file_for` can binary-search.
+    /// Borrows never escape the lock; values are copied out.
+    alloc: Mutex<AllocIndex>,
+}
+
+#[derive(Default)]
+struct AllocIndex {
+    entries: Vec<(u32, FileId)>,
+    next_base: u32,
 }
 
 impl SourceCache {
@@ -170,8 +189,7 @@ impl SourceCache {
     pub fn new() -> Self {
         Self {
             files: FrozenMap::new(),
-            index: RefCell::new(Vec::new()),
-            next_base: Cell::new(0),
+            alloc: Mutex::new(AllocIndex::default()),
         }
     }
 
@@ -190,14 +208,18 @@ impl SourceCache {
 
     /// Resolve a global span to its owning file and the local range within it.
     pub fn file_for(&self, span: Span) -> (FileId, Range<u32>) {
-        let index = self.index.borrow();
-        debug_assert!(!index.is_empty(), "resolve() called before any file loaded");
+        let alloc = self.alloc.lock().expect("source cache poisoned");
+        debug_assert!(
+            !alloc.entries.is_empty(),
+            "resolve() called before any file loaded"
+        );
         // the file with the greatest base <= span.lo contains the span
-        let i = index
+        let i = alloc
+            .entries
             .partition_point(|(base, _)| *base <= span.lo)
             .saturating_sub(1);
-        let (base, id) = &index[i];
-        (*id, (span.lo - base)..(span.hi - base))
+        let (base, id) = alloc.entries[i];
+        (id, (span.lo - base)..(span.hi - base))
     }
 
     pub fn reportable_span_for(&self, span: Span) -> ReportableSpan<'_> {
@@ -242,11 +264,21 @@ impl SourceCache {
     /// Load `id` if needed and return the cached entry. The returned reference
     /// is tied to `&self`, i.e. it lives as long as the cache does.
     fn ensure_loaded(&self, id: FileId) -> io::Result<&CachedSource> {
+        // Fast path: lock-free lookup for already-loaded files.
         if let Some(f) = self.files.get(&id) {
             return Ok(f);
         }
+        // Read before taking the allocator lock, so slow disk I/O never blocks
+        // other threads' `file_for`/`lc_index` lookups.
         let raw = std::fs::read_to_string(id.as_str())?;
-        let base = self.next_base.get();
+        let mut alloc = self.alloc.lock().expect("source cache poisoned");
+        // Two threads may race to load the same file. Every insert happens under
+        // this lock, so the loser reliably finds the winner's entry here and
+        // drops its own read; bases stay contiguous and are never leaked.
+        if let Some(f) = self.files.get(&id) {
+            return Ok(f);
+        }
+        let base = alloc.next_base;
         let len: u32 = raw.len().try_into().expect("source file exceeds 4 GiB");
         // +1 keeps adjacent files from sharing a boundary offset; the checked adds
         // also enforce the 4 GiB cap on the whole global space.
@@ -254,8 +286,8 @@ impl SourceCache {
             .checked_add(len)
             .and_then(|end| end.checked_add(1))
             .expect("total loaded source exceeds 4 GiB");
-        self.next_base.set(next);
-        self.index.borrow_mut().push((base, id));
+        alloc.next_base = next;
+        alloc.entries.push((base, id));
         // `FrozenMap::insert` takes `&self` and returns a reference to the
         // (boxed, address-stable) inserted value.
         Ok(self.files.insert(
@@ -349,3 +381,12 @@ impl ariadne::Span for ReportableSpan<'_> {
         self.own.get_or_init(|| self.cache.file_for(self.span)).1.end as usize
     }
 }
+
+// Parallel per-file frontends require sharing the cache (and passing FileIds)
+// across threads; keep that possibility honest at compile time.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<SourceCache>();
+    assert_send_sync::<FileId>();
+    assert_send_sync::<Span>();
+};
