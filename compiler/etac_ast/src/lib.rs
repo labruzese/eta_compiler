@@ -1,130 +1,81 @@
 //! Abstract syntax tree for the Eta language.
 //!
-//!  * Carrier / Kind split: `Expr` { `node_id`, span, kind: `ExprKind` }, etc.
-//!    The carrier struct owns identity (`node_id`) and location (span); the
-//!    `*Kind` enum owns the shape. Carriers get ids; leaf kinds do not.
-//!  * `Spanned<T>` wraps small things that need a location but don't earn a
-//!    full node (operators, etc.) instead of a parallel `_span` field.
-//!  * `Error` variants mark recovered regions. The parser only builds one after
-//!    recording the recovery's diagnostic.
-//!  * Node ids are handed out by a `NodeIdGen` threaded through the parser
-//!    (deterministic, resettable), not a process-global atomic.
-
-use etac_span::Span;
+//!  * Every carrier struct owns a [`NodeId`], and spans live outside the tree in the session [`SpanTable`]. Recover a location with
+//!    `spans.get(node.node_id)` or `spans.span_of(&node)`.
+//!
+//!  * Carrier / Kind split: `Expr` { `node_id`, kind: `ExprKind` }, etc. The
+//!    carrier struct owns identity; the `*Kind` enum owns the shape. 
+//!    Kinds are id-free  implements [`AstNode`] by destructuring to its 
+//!    concrete payload's id.
+//!
+//!  * [`Leaf<T>`] pairs things too small to earn a full node (operators, `_`
+//!    discards) with an id so their spans are still recorded precisely,
+//!    instead of a parallel `_span` field.
+//!
+//!  * `Error` variants mark recovered regions. The parser only builds one
+//!    after recording the recovery's diagnostic.
+//!
+//!  * One [`SpanTable`] is shared per compilation session and threaded through
+//!    the parses of the program and every interface, so ids are unique across
+//!    all trees. 
+//!
+//!    Later phases (typechecking over a desugared HIR) can key
+//!    per-node facts by `NodeId` against the same flat table, and synthesized
+//!    nodes can allocate ids of their own.
 
 mod printer;
 
-// ---- Core ids and spans ----
+mod span_table;
+pub use span_table::*;
 
-/// Stable identifier for a node. Assigned by `NodeIdGen`, do not construct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(u32);
+// ---- Node macro ----
 
-impl NodeId {
-    /// Placeholder for synthesized nodes before real ids are assigned.
-    pub const DUMMY: NodeId = NodeId(u32::MAX);
-
-    #[must_use]
-    pub fn as_u32(self) -> u32 {
-        self.0
-    }
-}
-
-/// Hands out fresh node ids. Thread one through the parser and call `fresh()`.
-/// Reset between compilations / tests by constructing a new one.
-#[derive(Debug, Default)]
-pub struct NodeIdGen {
-    next: u32,
-}
-
-impl NodeIdGen {
-    #[must_use]
-    pub fn new() -> Self {
-        NodeIdGen { next: 0 }
-    }
-
-    pub fn fresh(&mut self) -> NodeId {
-        let id = NodeId(self.next);
-        self.next += 1;
-        id
-    }
-}
-
-/// Uniform span access for any node that carries one.
-pub trait HasSpan {
-    fn span(&self) -> Span;
-}
-
-/// Uniform id access for any carrier node.
-pub trait HasNodeId {
-    fn node_id(&self) -> NodeId;
-}
-
-/// A `T` paired with a source location, for leaves too small to be full nodes.
-#[derive(Debug, Clone, Copy)]
-pub struct Spanned<T> {
-    pub node: T,
-    pub span: Span,
-}
-
-pub fn respan<T>(span: Span, node: T) -> Spanned<T> {
-    Spanned { node, span }
-}
-
-impl<T> HasSpan for Spanned<T> {
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-
-// ---- Node macros ----
-
-/// A `*Kind`-style enum: shape only, no identity or location.
-macro_rules! opaque {
-    ($(#[$meta:meta])* $name:ident { $($body:tt)* }) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone)]
-        pub enum $name {
-            $($body)*
-        }
-    };
-}
-
-/// A carrier struct: owns `node_id` + `span`, plus public fields.
-/// `new` takes the id explicitly (get it from `NodeIdGen::fresh`).
-macro_rules! concrete {
+/// A carrier struct: owns identity (`node_id`, keying into the session
+/// [`SpanTable`]) plus its public fields. `new` takes the id explicitly.
+macro_rules! node {
     ($(#[$meta:meta])* $name:ident { $($field:ident : $type:ty),* $(,)? }) => {
         $(#[$meta])*
         #[derive(Debug, Clone)]
         pub struct $name {
             pub node_id: NodeId,
-            pub span: Span,
             $(pub $field: $type,)*
         }
-
-        impl HasSpan for $name {
-            fn span(&self) -> Span {
-                self.span
-            }
-        }
-
-        impl HasNodeId for $name {
+        impl AstNode for $name {
             fn node_id(&self) -> NodeId {
                 self.node_id
             }
         }
-
         impl $name {
-            pub fn new(node_id: NodeId, span: Span, $($field: $type),*) -> Self {
-                $name { node_id, span, $($field),* }
+            pub fn new(node_id: NodeId, $($field: $type),*) -> Self {
+                $name { node_id, $($field),* }
             }
         }
     };
 }
 
+/// A `T` too small to earn a carrier struct (operators, `_` discards), paired
+/// with the id under which its span is recorded.
+#[derive(Debug, Clone, Copy)]
+pub struct Leaf<T> {
+    pub node_id: NodeId,
+    pub node: T,
+}
+
+impl<T> Leaf<T> {
+    pub fn new(node_id: NodeId, node: T) -> Self {
+        Leaf { node_id, node }
+    }
+}
+
+impl<T> AstNode for Leaf<T> {
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+}
+
 // ---- Identifiers ----
 
-concrete! {
+node! {
     Ident {
         sym: String
     }
@@ -132,55 +83,53 @@ concrete! {
 
 // ---- Top level ----
 
-concrete! {
+node! {
     Program {
         uses: Vec<Use>,
         definitions: Vec<Definition>
     }
 }
 
-concrete! {
+node! {
     Interface {
         items: Vec<InterfaceItem>
     }
 }
 
-concrete! {
+node! {
     Use {
         id: Ident
     }
 }
 
-concrete! {
+node! {
     Definition {
         kind: DefinitionKind
     }
 }
 
-opaque! {
-    DefinitionKind {
-        Method(Method),
-        GlobDecl(GlobDecl),
-        Error,
-    }
+#[derive(Debug, Clone)]
+pub enum DefinitionKind {
+    Method(Method),
+    GlobDecl(GlobDecl),
+    Error,
 }
 
-concrete! {
+node! {
     InterfaceItem {
         kind: InterfaceItemKind
     }
 }
 
-opaque! {
-    InterfaceItemKind {
-        Decl(MethodDecl),
-        Error,
-    }
+#[derive(Debug, Clone)]
+pub enum InterfaceItemKind {
+    Decl(MethodDecl),
+    Error,
 }
 
 // ---- Methods & globals ----
 
-concrete! {
+node! {
     MethodDecl {
         id: Ident,
         params: Vec<Decl>,
@@ -188,7 +137,7 @@ concrete! {
     }
 }
 
-concrete! {
+node! {
     Method {
         id: Ident,
         params: Vec<Decl>,
@@ -197,7 +146,7 @@ concrete! {
     }
 }
 
-concrete! {
+node! {
     GlobDecl {
         id: Ident,
         typ: Type,
@@ -207,20 +156,19 @@ concrete! {
 
 // `Value` overlaps `Lit::{Int, Bool}` but is kept separate because a global
 // initializer is a *constant*, not an arbitrary expression.
-concrete! {
+node! {
     Value {
         kind: ValueKind
     }
 }
 
-opaque! {
-    ValueKind {
-        Int(i128),
-        Bool(bool),
-    }
+#[derive(Debug, Clone)]
+pub enum ValueKind {
+    Int(i128),
+    Bool(bool),
 }
 
-concrete! {
+node! {
     Decl {
         id: Ident,
         typ: Type
@@ -229,18 +177,17 @@ concrete! {
 
 // ---- Types ----
 
-concrete! {
+node! {
     Type {
         kind: TypeKind
     }
 }
 
-opaque! {
-    TypeKind {
-        Array { of: Box<Type>, size: Option<Box<Expr>> },
-        Int,
-        Bool,
-    }
+#[derive(Debug, Clone)]
+pub enum TypeKind {
+    Array { of: Box<Type>, size: Option<Box<Expr>> },
+    Int,
+    Bool,
 }
 
 impl TypeKind {
@@ -252,60 +199,67 @@ impl TypeKind {
 
 // ---- Blocks & statements ----
 
-concrete! {
+node! {
     Block {
         stmts: Vec<Stmt>
     }
 }
 
-concrete! {
+node! {
     Stmt {
         kind: StmtKind
     }
 }
 
-opaque! {
-    StmtKind {
-        Assign { targets: Vec<Target>, values: Vec<Expr> },
-        If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
-        While { cond: Expr, body: Box<Stmt> },
-        Return { values: Vec<Expr> },
-        Call(ProcCall),
-        Block(Block),
-        Decls(Vec<Decl>),
-        Error,
-    }
+#[derive(Debug, Clone)]
+pub enum StmtKind {
+    Assign { targets: Vec<Target>, values: Vec<Expr> },
+    If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
+    While { cond: Expr, body: Box<Stmt> },
+    Return { values: Vec<Expr> },
+    Call(ProcCall),
+    Block(Block),
+    Decls(Vec<Decl>),
+    Error,
 }
 
 // ---- Targets & lvalues ----
 
-// `Target` has no node_id/span of its own; its payload carries one (except
-// `Discard`, whose span rides in the `Spanned<()>`).
-opaque! {
-    Target {
-        LValue(LValue),
-        Decl(Decl),
-        Discard(Spanned<()>),
+/// `Target` has no `node_id` of its own; every variant's payload carries one,
+/// so its `AstNode` impl destructures to the concrete payload.
+#[derive(Debug, Clone)]
+pub enum Target {
+    LValue(LValue),
+    Decl(Decl),
+    Discard(Leaf<()>),
+}
+
+impl AstNode for Target {
+    fn node_id(&self) -> NodeId {
+        match self {
+            Target::LValue(lv) => lv.node_id,
+            Target::Decl(d) => d.node_id,
+            Target::Discard(leaf) => leaf.node_id,
+        }
     }
 }
 
-concrete! {
+node! {
     LValue {
         kind: LValueKind
     }
 }
 
-opaque! {
-    LValueKind {
-        Id(Ident),
-        ProcCall(ProcCall),
-        Index { array: Box<Expr>, index: Box<Expr> },
-    }
+#[derive(Debug, Clone)]
+pub enum LValueKind {
+    Id(Ident),
+    ProcCall(ProcCall),
+    Index { array: Box<Expr>, index: Box<Expr> },
 }
 
 // ---- Calls ----
 
-concrete! {
+node! {
     ProcCall {
         id: Ident,
         args: Vec<Expr>
@@ -314,23 +268,22 @@ concrete! {
 
 // ---- Expressions ----
 
-concrete! {
+node! {
     Expr {
         kind: ExprKind
     }
 }
 
-opaque! {
-    ExprKind {
-        Id(Ident),
-        Lit(Lit),
-        Index { array: Box<Expr>, index: Box<Expr> },
-        Call(ProcCall),
-        Length(Box<Expr>),
-        Unary { op: Spanned<UOp>, operand: Box<Expr> },
-        Binary { op: Spanned<BinOp>, lhs: Box<Expr>, rhs: Box<Expr> },
-        Error,
-    }
+#[derive(Debug, Clone)]
+pub enum ExprKind {
+    Id(Ident),
+    Lit(Lit),
+    Index { array: Box<Expr>, index: Box<Expr> },
+    Call(ProcCall),
+    Length(Box<Expr>),
+    Unary { op: Leaf<UOp>, operand: Box<Expr> },
+    Binary { op: Leaf<BinOp>, lhs: Box<Expr>, rhs: Box<Expr> },
+    Error,
 }
 
 // ---- Operators ----
@@ -418,7 +371,7 @@ impl BinOp {
     }
 }
 
-// ---- Literals (span-free; inherit from the enclosing Expr) ----
+// ---- Literals (id-free; locate via the enclosing Expr) ----
 
 #[derive(Debug, Clone)]
 pub enum Lit {

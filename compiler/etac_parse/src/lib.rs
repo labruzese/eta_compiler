@@ -1,4 +1,4 @@
-use etac_ast::{Expr, ExprKind, LValue, LValueKind, NodeIdGen};
+use etac_ast::{Expr, ExprKind, LValue, LValueKind, SpanTable};
 use etac_errors::{etac_error, Diag, DiagCtxt};
 use etac_lexer::{ILexer, Token};
 use etac_span::Span;
@@ -31,22 +31,19 @@ impl<Out> Parsed<Out> {
 }
 
 /// Mutable state threaded through every grammar action.
-///
-/// Bundles the [`NodeIdGen`] that hands out node ids with the buffer lalrpop fills
-/// on error recovery, so the grammar carries a single parameter instead of two.
-pub(crate) struct ParseState<'dcx> {
+pub(crate) struct ParseState<'dcx, 'st> {
     pub diagc: &'dcx DiagCtxt,
-    pub ids: NodeIdGen,
+    pub spans: &'st mut SpanTable,
     pub lalrpop_errs: Vec<ErrorRecovery<u32, Token<'static>, Diag<'dcx>>>,
     pub etac_errs: Vec<Diag<'dcx>>,
 }
 
-impl<'dcx> ParseState<'dcx> {
+impl<'dcx, 'st> ParseState<'dcx, 'st> {
     #[must_use]
-    pub fn new(diagnostic_context: &'dcx DiagCtxt) -> Self {
+    pub fn new(diagnostic_context: &'dcx DiagCtxt, spans: &'st mut SpanTable) -> Self {
         ParseState {
             diagc: diagnostic_context,
-            ids: NodeIdGen::default(),
+            spans,
             lalrpop_errs: Vec::new(),
             etac_errs: Vec::new(),
         }
@@ -79,14 +76,16 @@ macro_rules! impl_iparser {
         impl_iparser!(@inner ($full) ($($rest)::+) $out);
     };
     (@inner ($full:path) ($name:ident) $out:ty) => {
-        pub struct $name<'dcx> {
-            state: ParseState<'dcx>
+        pub struct $name<'dcx, 'st> {
+            state: ParseState<'dcx, 'st>
         }
-        impl<'dcx> $name<'dcx> {
+        impl<'dcx, 'st> $name<'dcx, 'st> {
             #[must_use]
-            pub fn new(diagc: &'dcx DiagCtxt) -> Self { $name { state: ParseState::new(diagc) } }
+            pub fn new(diagc: &'dcx DiagCtxt, spans: &'st mut SpanTable) -> Self {
+                $name { state: ParseState::new(diagc, spans) }
+            }
         }
-        impl<'dcx> IParser<'dcx> for $name<'dcx> {
+        impl<'dcx, 'st> IParser<'dcx> for $name<'dcx, 'st> {
             type Out = $out;
 
             fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> Parsed<Self::Out> {
@@ -127,17 +126,17 @@ macro_rules! impl_iparser {
 impl_iparser! {grammar::ProgramParser, etac_ast::Program}
 impl_iparser! {grammar::InterfaceParser, etac_ast::Interface}
 
-/// Reinterpret a parsed [`LValue`] as the equivalent [`Expr`], minting fresh ids for
-/// the rebuilt carrier. The AST models the array operand of an indexed lvalue
-/// (`a[i]`) as an `Expr`, so the grammar funnels the accumulated base through here
-/// when folding postfix `[..]` groups.
-pub(crate) fn lvalue_to_expr(lv: LValue, ids: &mut NodeIdGen) -> Expr {
+/// Reinterpret a parsed [`LValue`] as the equivalent [`Expr`], minting a fresh id
+/// (sharing the lvalue's recorded span) for the rebuilt carrier. The AST models the
+/// array operand of an indexed lvalue (`a[i]`) as an `Expr`, so the grammar funnels
+/// the accumulated base through here when folding postfix `[..]` groups.
+pub(crate) fn lvalue_to_expr(lv: LValue, spans: &mut SpanTable) -> Expr {
     let kind = match lv.kind {
         LValueKind::Id(id) => ExprKind::Id(id),
         LValueKind::ProcCall(pc) => ExprKind::Call(pc),
         LValueKind::Index { array, index } => ExprKind::Index { array, index },
     };
-    Expr::new(ids.fresh(), lv.span, kind)
+    Expr::new(spans.dup(lv.node_id), kind)
 }
 
 /// LALRPOP error to [`Diag`]

@@ -4,6 +4,7 @@
 //! Currently also does file resolution / lookup.
 
 use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed, etac_error};
+use etac_ast::SpanTable;
 use etac_parse::{IParser, Parsed};
 use etac_session::{cli::Flags, logger::Logger};
 use etac_span::{FileId, Span};
@@ -99,6 +100,8 @@ pub fn run(flags: &Flags) -> CompilationResult {
     let logger = Logger::new(flags);
     let dcx = DiagCtxt::new(etac_span::sources());
 
+    let mut spans = SpanTable::new();
+
     let mut resolver = Resolver::new(&flags.source_path, &flags.lib_path);
 
     let files: Vec<File> = flags
@@ -113,21 +116,22 @@ pub fn run(flags: &Flags) -> CompilationResult {
     for file in files {
         match file {
             File::Program(p) => {
-                let pparser = etac_parse::ProgramParser::new(&dcx);
+                let pparser = etac_parse::ProgramParser::new(&dcx, &mut spans);
                 let program = match parse_one(&logger, &dcx, p, LoadBlame::CommandLine, pparser) {
                     Ok(p) => p,
                     Err(_g) => continue,
                 };
                 for u in &program.uses {
-                    let i = match resolver.resolve_use(&dcx, p, &u.id.sym, u.span) {
+                    let uspan = spans.get(u.node_id);
+                    let i = match resolver.resolve_use(&dcx, p, &u.id.sym, uspan) {
                         Ok(Some(i)) => i,
                         // already included
                         Ok(None) => continue,
                         // skip if failure
                         Err(_guar) => continue,
                     };
-                    let iparser = etac_parse::InterfaceParser::new(&dcx);
-                    let interface = match parse_one(&logger, &dcx, i, LoadBlame::Use(u.span), iparser) {
+                    let iparser = etac_parse::InterfaceParser::new(&dcx, &mut spans);
+                    let interface = match parse_one(&logger, &dcx, i, LoadBlame::Use(uspan), iparser) {
                         Ok(i) => i,
                         Err(_g) => continue
                     };
@@ -136,7 +140,7 @@ pub fn run(flags: &Flags) -> CompilationResult {
                 programs.push(program);
             },
             File::Interface(i) => {
-                let iparser = etac_parse::InterfaceParser::new(&dcx);
+                let iparser = etac_parse::InterfaceParser::new(&dcx, &mut spans);
                 let interface = match parse_one(&logger, &dcx, i, LoadBlame::CommandLine, iparser) {
                     Ok(i) => i,
                     Err(_g) => continue

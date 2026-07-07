@@ -23,6 +23,7 @@ pretty          = "0.12"
 unicode-width   = "0.2"
 tempfile 	= "3.27.0"
 elsa 		= "1.11.2"
+equivalent 	= "1.0.2"
 
 # internal
 etac	      = { path = "compiler/etac"}

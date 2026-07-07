@@ -5,7 +5,7 @@ use etac_lexer::Token;
 use etac_span::Span;
 use crate::{ParseState, lvalue_to_expr};
 
-grammar<'dcx>(state: &mut ParseState<'dcx>);
+grammar<'dcx, 'st>(state: &mut ParseState<'dcx, 'st>);
 
 // ---- macros ----
 
@@ -82,13 +82,13 @@ extern {
 
 // ---- Identifiers ----
 
-Ident: Ident = <l:@L> <s:"ident"> <r:@R> => Ident::new(state.ids.fresh(), Span::new(l, r), s.to_string());
+Ident: Ident = <l:@L> <s:"ident"> <r:@R> => Ident::new(state.spans.alloc(Span::new(l, r)), s.to_string());
 
 // ---- Top Level ----
 
 pub Program: Program = {
     <l:@L> <uses:UseList> <definitions:Definition+> <r:@R> =>
-	Program::new(state.ids.fresh(), Span::new(l, r), uses, definitions),
+	Program::new(state.spans.alloc(Span::new(l, r)), uses, definitions),
     <uses:UseList> <r:@R> =>? Err(
 	etac_error! {
 	    state.diagc, Span::new(r, r), "Program must contain at least one definition";
@@ -106,7 +106,7 @@ pub Program: Program = {
 }
 
 pub Interface: Interface = {
-    <l:@L> <items:InterfaceItem+> <r:@R> => Interface::new(state.ids.fresh(), Span::new(l, r), items),
+    <l:@L> <items:InterfaceItem+> <r:@R> => Interface::new(state.spans.alloc(Span::new(l, r)), items),
     <r:@R> =>? Err(
 	etac_error! {
 	    state.diagc, Span::new(r, r), "Interface must contain at least one method declaration";
@@ -117,15 +117,13 @@ pub Interface: Interface = {
 
 InterfaceItem: InterfaceItem = {
     <md:MethodDecl> => InterfaceItem::new(
-	state.ids.fresh(),
-	md.span(),
+	state.spans.dup(md.node_id),
 	InterfaceItemKind::Decl(md)
     ),
     <l:@L> <e:!> <r:@R> => {
 	state.lalrpop_errs.push(e);
 	InterfaceItem::new(
-	    state.ids.fresh(),
-	    Span::new(l, r),
+	    state.spans.alloc(Span::new(l, r)),
 	    InterfaceItemKind::Error
 	)
     }
@@ -140,17 +138,16 @@ UseList: Vec<Use> = {
 }
 
 Use: Use = {
-    <l:@L> "use" <id:Ident> ";"? <r:@R> => Use::new(state.ids.fresh(), Span::new(l, r), id),
+    <l:@L> "use" <id:Ident> ";"? <r:@R> => Use::new(state.spans.alloc(Span::new(l, r)), id),
 }
 
 Definition: Definition = {
-    <m:Method>    => Definition::new(state.ids.fresh(), m.span(), DefinitionKind::Method(m)),
-    <gd:GlobDecl> => Definition::new(state.ids.fresh(), gd.span(), DefinitionKind::GlobDecl(gd)),
+    <m:Method>    => Definition::new(state.spans.dup(m.node_id), DefinitionKind::Method(m)),
+    <gd:GlobDecl> => Definition::new(state.spans.dup(gd.node_id), DefinitionKind::GlobDecl(gd)),
     <l:@L> <e:!> <r:@R> => {
 	state.lalrpop_errs.push(e);
 	Definition::new(
-	    state.ids.fresh(),
-	    Span::new(l, r),
+	    state.spans.alloc(Span::new(l, r)),
 	    DefinitionKind::Error
 	)
     }
@@ -158,13 +155,13 @@ Definition: Definition = {
 
 MethodDecl: MethodDecl = {
     <l:@L> <id:Ident> "(" <params:Comma<Decl>> ")" <ret:(":" <CommaPlus<Type>>)?> <r:@R> =>
-        MethodDecl::new(state.ids.fresh(), Span::new(l, r), id, params, ret.unwrap_or_default()),
+        MethodDecl::new(state.spans.alloc(Span::new(l, r)), id, params, ret.unwrap_or_default()),
 }
 
 Method: Method = {
     <l:@L> <decl:MethodDecl> <body:Block> <r:@R> => {
 	let MethodDecl { id, params, ret_types, .. } = decl;
-	Method::new(state.ids.fresh(), Span::new(l, r), id, params, ret_types, body)
+	Method::new(state.spans.alloc(Span::new(l, r)), id, params, ret_types, body)
     },
     // Recover a broken body while preserving the (already-valid) signature, so
     // downstream passes can still resolve calls to this method.
@@ -172,21 +169,21 @@ Method: Method = {
 	state.lalrpop_errs.push(e);
 	let MethodDecl { id, params, ret_types, .. } = decl;
 	let bspan = Span::new(bl, r);
-	let err = Stmt::new(state.ids.fresh(), bspan, StmtKind::Error);
-	let body = Block::new(state.ids.fresh(), bspan, vec![err]);
-	Method::new(state.ids.fresh(), Span::new(l, r), id, params, ret_types, body)
+	let err = Stmt::new(state.spans.alloc(bspan), StmtKind::Error);
+	let body = Block::new(state.spans.alloc(bspan), vec![err]);
+	Method::new(state.spans.alloc(Span::new(l, r)), id, params, ret_types, body)
     },
 }
 
 GlobDecl: GlobDecl = {
     <l:@L> <id:Ident> ":" <typ:GlobDeclType> <val:("=" <GlobalValue>)?> ";"? <r:@R> =>
-	GlobDecl::new(state.ids.fresh(), Span::new(l, r), id, typ, val),
+	GlobDecl::new(state.spans.alloc(Span::new(l, r)), id, typ, val),
 }
 
 GlobalValue: Value = {
-    <l:@L> "-" <n:"intlit"> <r:@R> 	=> Value::new(state.ids.fresh(), Span::new(l, r), ValueKind::Int(-(n as i128))),
-    <l:@L> <n:"intlit"> <r:@R>    	=> Value::new(state.ids.fresh(), Span::new(l, r), ValueKind::Int(n as i128)),
-    <l:@L> <b:"boollit"> <r:@R>		=> Value::new(state.ids.fresh(), Span::new(l, r), ValueKind::Bool(b)),
+    <l:@L> "-" <n:"intlit"> <r:@R> 	=> Value::new(state.spans.alloc(Span::new(l, r)), ValueKind::Int(-(n as i128))),
+    <l:@L> <n:"intlit"> <r:@R>    	=> Value::new(state.spans.alloc(Span::new(l, r)), ValueKind::Int(n as i128)),
+    <l:@L> <b:"boollit"> <r:@R>		=> Value::new(state.spans.alloc(Span::new(l, r)), ValueKind::Bool(b)),
 }
 
 
@@ -212,12 +209,12 @@ TypeUnsized: Type = {
             .collect();
         all.into_iter().rev().fold(base, |inner, dim| match dim {
             Either::Left((l, size, r)) =>
-                Type::new(state.ids.fresh(), Span::new(l, r), TypeKind::Array {
+                Type::new(state.spans.alloc(Span::new(l, r)), TypeKind::Array {
 		    of: Box::new(inner),
 		    size: Some(Box::new(size))
 		}),
             Either::Right((l, r)) =>
-                Type::new(state.ids.fresh(), Span::new(l, r), TypeKind::Array {
+                Type::new(state.spans.alloc(Span::new(l, r)), TypeKind::Array {
 		    of: Box::new(inner),
 		    size: None
 		}),
@@ -229,7 +226,7 @@ TypeSized: Type = {
     <BaseType>,
     <base:BaseType> <dims:SizedDim+> => {
         dims.into_iter().rev().fold(base, |inner, (l, size, r)| {
-            Type::new(state.ids.fresh(), Span::new(l, r), TypeKind::Array {
+            Type::new(state.spans.alloc(Span::new(l, r)), TypeKind::Array {
 		of: Box::new(inner),
 		size: Some(Box::new(size))
 	    })
@@ -249,8 +246,8 @@ GlobDeclType: Type = {
 }
 
 BaseType: Type = {
-    <l:@L> "int" <r:@R> 	=> Type::new(state.ids.fresh(), Span::new(l, r), TypeKind::Int),
-    <l:@L> "bool" <r:@R>	=> Type::new(state.ids.fresh(), Span::new(l, r), TypeKind::Bool),
+    <l:@L> "int" <r:@R> 	=> Type::new(state.spans.alloc(Span::new(l, r)), TypeKind::Int),
+    <l:@L> "bool" <r:@R>	=> Type::new(state.spans.alloc(Span::new(l, r)), TypeKind::Bool),
 }
 
 // ----- Blocks -----
@@ -258,7 +255,7 @@ BaseType: Type = {
 Block: Block = {
     <l:@L> "{" <mut stmts:(<Stmt> ";"?)*> <ret:ReturnStmtNode?> "}" <r:@R> => {
 	if let Some(ret) = ret { stmts.push(ret); }
-	Block::new(state.ids.fresh(), Span::new(l, r), stmts)
+	Block::new(state.spans.alloc(Span::new(l, r)), stmts)
     },
 }
 
@@ -270,13 +267,13 @@ Stmt: Stmt = {
     StmtClosed,
     <l:@L> <e:!> <r:@R> => {
 	state.lalrpop_errs.push(e);
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Error)
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::Error)
     }
 }
 
 ReturnStmtNode: Stmt = {
     <l:@L> "return" <values:Comma<Expr>> ";"? <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Return { values }),
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::Return { values }),
 }
 
 // elses can be matched
@@ -287,13 +284,13 @@ StmtOpen: Stmt = {
 
 IfStmtOpen: Stmt = {
     <l:@L> "if" <cond:Expr> <t:Stmt> <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::If {
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::If {
 	    cond,
 	    then_branch: Box::new(t),
 	    else_branch: None
 	}),
     <l:@L> "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtOpen> <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::If {
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::If {
 	    cond,
 	    then_branch: Box::new(t),
 	    else_branch: Some(Box::new(e))
@@ -301,7 +298,7 @@ IfStmtOpen: Stmt = {
 }
 WhileStmtOpen: Stmt = {
     <l:@L> "while" <cond:Expr> <body:StmtOpen> <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::While {
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::While {
 	    cond,
 	    body: Box::new(body)
 	}),
@@ -311,16 +308,16 @@ WhileStmtOpen: Stmt = {
 StmtClosed: Stmt = {
     IfStmtClosed,
     WhileStmtClosed,
-    <l:@L> <b:Block> <r:@R>          	=> Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Block(b)),
-    <l:@L> <pcall:ProcCall> <r:@R>   	=> Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Call(pcall)),
-    <l:@L> <decls:DeclTargets> <r:@R> 	=> Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Decls(decls)),
+    <l:@L> <b:Block> <r:@R>          	=> Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::Block(b)),
+    <l:@L> <pcall:ProcCall> <r:@R>   	=> Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::Call(pcall)),
+    <l:@L> <decls:DeclTargets> <r:@R> 	=> Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::Decls(decls)),
     <l:@L> <ts:DeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Assign {
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::Assign {
 	    targets: ts.into_iter().map(Target::Decl).collect(),
 	    values,
 	}),
     <l:@L> <ts:NonDeclTargets> "=" <values:CommaPlus<Expr>> <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::Assign {
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::Assign {
 	    targets: ts,
 	    values
 	}),
@@ -328,7 +325,7 @@ StmtClosed: Stmt = {
 
 IfStmtClosed: Stmt = {
     <l:@L> "if" <cond:Expr> <t:StmtClosed> "else" <e:StmtClosed> <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::If {
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::If {
 	    cond,
 	    then_branch: Box::new(t),
 	    else_branch: Some(Box::new(e))
@@ -336,7 +333,7 @@ IfStmtClosed: Stmt = {
 }
 WhileStmtClosed: Stmt = {
     <l:@L> "while" <cond:Expr> <body:StmtClosed> <r:@R> =>
-	Stmt::new(state.ids.fresh(), Span::new(l, r), StmtKind::While {
+	Stmt::new(state.spans.alloc(Span::new(l, r)), StmtKind::While {
 	    cond,
 	    body: Box::new(body)
 	}),
@@ -345,7 +342,7 @@ WhileStmtClosed: Stmt = {
 // ---- Non-Control Flow Statements ----
 
 Decl: Decl = {
-    <l:@L> <id:Ident> ":" <typ:Type> <r:@R> => Decl::new(state.ids.fresh(), Span::new(l, r), id, typ),
+    <l:@L> <id:Ident> ":" <typ:Type> <r:@R> => Decl::new(state.spans.alloc(Span::new(l, r)), id, typ),
 }
 
 // pure decl target also valid as multi-decl
@@ -374,15 +371,15 @@ NonDeclTargets: Vec<Target> = {
 
 NonDeclTarget: Target = {
     <lv:LValue> 	 => Target::LValue(lv),
-    <l:@L> "_" <r:@R>	 => Target::Discard(respan(Span::new(l, r), ())),
+    <l:@L> "_" <r:@R>	 => Target::Discard(Leaf::new(state.spans.alloc(Span::new(l, r)), ())),
 }
 
 LValue: LValue = {
     <base:LValueBase> <indices:ArrayIndex*> => {
         indices.into_iter().fold(base, |lv, (idx, ispan)| {
-            let span = lv.span().to(ispan);
-	    let array = lvalue_to_expr(lv, &mut state.ids);
-            LValue::new(state.ids.fresh(), span, LValueKind::Index {
+            let span = state.spans.get(lv.node_id).to(ispan);
+	    let array = lvalue_to_expr(lv, state.spans);
+            LValue::new(state.spans.alloc(span), LValueKind::Index {
 		array: Box::new(array),
 		index: Box::new(idx)
 	    })
@@ -390,12 +387,12 @@ LValue: LValue = {
     },
 }
 LValueBase: LValue = {
-    <id:Ident>        => LValue::new(state.ids.fresh(), id.span(), LValueKind::Id(id)),
-    <pc:ProcCall>     => LValue::new(state.ids.fresh(), pc.span(), LValueKind::ProcCall(pc)),
+    <id:Ident>        => LValue::new(state.spans.dup(id.node_id), LValueKind::Id(id)),
+    <pc:ProcCall>     => LValue::new(state.spans.dup(pc.node_id), LValueKind::ProcCall(pc)),
 }
 
 ProcCall: ProcCall = {
-    <l:@L> <id:Ident> "(" <args:Comma<Expr>> ")" <r:@R> => ProcCall::new(state.ids.fresh(), Span::new(l, r), id, args),
+    <l:@L> <id:Ident> "(" <args:Comma<Expr>> ")" <r:@R> => ProcCall::new(state.spans.alloc(Span::new(l, r)), id, args),
 }
 
 // index expression plus the span of the `[..]` bracket group
@@ -447,36 +444,36 @@ Expr: Expr = {
 
     #[precedence(level="1")]
     <l:@L> <op:UnaryOp> <or:@R> <e:Expr> <r:@R>
-        => Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Unary { op: respan(Span::new(l, or), op), operand: Box::new(e) }),
+        => Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Unary { op: Leaf::new(state.spans.alloc(Span::new(l, or)), op), operand: Box::new(e) }),
 
     #[precedence(level="2")] #[assoc(side="left")]
     <l:@L> <lhs:Expr> <ol:@L> <op:MulOp> <or:@R> <rhs:Expr> <r:@R>
-        => Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Binary { op: respan(Span::new(ol, or), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
+        => Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Binary { op: Leaf::new(state.spans.alloc(Span::new(ol, or)), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
 
     #[precedence(level="3")] #[assoc(side="left")]
     <l:@L> <lhs:Expr> <ol:@L> <op:AddOp> <or:@R> <rhs:Expr> <r:@R>
-        => Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Binary { op: respan(Span::new(ol, or), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
+        => Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Binary { op: Leaf::new(state.spans.alloc(Span::new(ol, or)), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
 
     #[precedence(level="4")] #[assoc(side="left")]
     <l:@L> <lhs:Expr> <ol:@L> <op:RelOp> <or:@R> <rhs:Expr> <r:@R>
-        => Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Binary { op: respan(Span::new(ol, or), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
+        => Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Binary { op: Leaf::new(state.spans.alloc(Span::new(ol, or)), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
 
     #[precedence(level="5")] #[assoc(side="left")]
     <l:@L> <lhs:Expr> <ol:@L> <op:EqOp> <or:@R> <rhs:Expr> <r:@R>
-        => Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Binary { op: respan(Span::new(ol, or), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
+        => Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Binary { op: Leaf::new(state.spans.alloc(Span::new(ol, or)), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
 
     #[precedence(level="6")] #[assoc(side="left")]
     <l:@L> <lhs:Expr> <ol:@L> <op:AndOp> <or:@R> <rhs:Expr> <r:@R>
-        => Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Binary { op: respan(Span::new(ol, or), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
+        => Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Binary { op: Leaf::new(state.spans.alloc(Span::new(ol, or)), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
 
     #[precedence(level="7")] #[assoc(side="left")]
     <l:@L> <lhs:Expr> <ol:@L> <op:OrOp> <or:@R> <rhs:Expr> <r:@R>
-        => Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Binary { op: respan(Span::new(ol, or), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
+        => Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Binary { op: Leaf::new(state.spans.alloc(Span::new(ol, or)), op), lhs: Box::new(lhs), rhs: Box::new(rhs) }),
 
     #[precedence(level="8")]
     <l:@L> <e:!> <r:@R> => {
 	state.lalrpop_errs.push(e);
-	Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Error)
+	Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Error)
     }
 }
 
@@ -484,17 +481,20 @@ Expr: Expr = {
 Primary: Expr = {
     <array:PrimaryBase> <indices:ArrayIndex*> => {
         indices.into_iter().fold(array, |arr, (idx, ispan)| {
-	    let span = arr.span().to(ispan);
-	    Expr::new(state.ids.fresh(), span, ExprKind::Index { array: Box::new(arr), index: Box::new(idx) })
+	    let span = state.spans.get(arr.node_id).to(ispan);
+	    Expr::new(state.spans.alloc(span), ExprKind::Index { array: Box::new(arr), index: Box::new(idx) })
         })
     },
 }
 
 PrimaryBase: Expr = {
-    <l:@L> <lit:Lit> <r:@R>                          	=> Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Lit(lit)),
-    <id:Ident>                                       	=> Expr::new(state.ids.fresh(), id.span(), ExprKind::Id(id)),
-    <l:@L> <id:Ident> "(" <a:Comma<Expr>> ")" <r:@R>	=> Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Call(ProcCall::new(state.ids.fresh(), Span::new(l, r), id, a))),
-    <l:@L> "length" "(" <e:Expr> ")" <r:@R>     	=> Expr::new(state.ids.fresh(), Span::new(l, r), ExprKind::Length(Box::new(e))),
+    <l:@L> <lit:Lit> <r:@R>                          	=> Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Lit(lit)),
+    <id:Ident>                                       	=> Expr::new(state.spans.dup(id.node_id), ExprKind::Id(id)),
+    <l:@L> <id:Ident> "(" <a:Comma<Expr>> ")" <r:@R>	=> {
+	let pc = ProcCall::new(state.spans.alloc(Span::new(l, r)), id, a);
+	Expr::new(state.spans.dup(pc.node_id), ExprKind::Call(pc))
+    },
+    <l:@L> "length" "(" <e:Expr> ")" <r:@R>     	=> Expr::new(state.spans.alloc(Span::new(l, r)), ExprKind::Length(Box::new(e))),
     "(" <Expr> ")",
 }
 

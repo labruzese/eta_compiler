@@ -336,6 +336,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "etac_hir"
+version = "0.1.0"
+
+[[package]]
 name = "etac_lexer"
 version = "0.1.0"
 dependencies = [
@@ -383,8 +387,10 @@ dependencies = [
 name = "etac_typecheck"
 version = "0.1.0"
 dependencies = [
+ "equivalent",
  "etac_ast",
  "etac_errors",
+ "etac_span",
 ]
 
 [[package]]

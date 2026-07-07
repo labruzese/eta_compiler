@@ -67,7 +67,8 @@ macro_rules! run_parse {
         let buf = BufferEmitter::new();
         let parsed = {
             let dcx = DiagCtxt::with_emitter(etac_span::sources(), Box::new(buf.clone()));
-            let mut parser = etac_parse::$parser::new(&dcx);
+            let mut spans = etac_ast::SpanTable::new();
+            let mut parser = etac_parse::$parser::new(&dcx, &mut spans);
             let (base, source) = etac_span::sources()
                 .load(file_id)
                 .expect("temp source should load");
