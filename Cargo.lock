@@ -321,6 +321,7 @@ dependencies = [
  "etac_errors",
  "etac_lexer",
  "etac_parse",
+ "etac_resolve",
  "etac_session",
  "etac_span",
  "log",
@@ -335,10 +336,6 @@ dependencies = [
  "etac_ast",
  "etac_span",
 ]
-
-[[package]]
-name = "etac_hir"
-version = "0.1.0"
 
 [[package]]
 name = "etac_lexer"
@@ -360,6 +357,15 @@ dependencies = [
  "etac_span",
  "lalrpop",
  "lalrpop-util 0.21.0",
+ "tempfile",
+]
+
+[[package]]
+name = "etac_resolve"
+version = "0.1.0"
+dependencies = [
+ "etac_errors",
+ "etac_span",
  "tempfile",
 ]
 

@@ -8,14 +8,11 @@ use etac_ast::SpanTable;
 use etac_parse::{IParser, Parsed};
 use etac_session::{cli::Flags, logger::Logger};
 use etac_span::{FileId, Span};
+use etac_resolve::{Resolver, File};
 
-pub use crate::resolve::Resolver;
 pub use crate::status::{CompilationFailure, CompilationSuccess};
 
-use crate::resolve::File;
-
 mod compat;
-mod resolve;
 mod status;
 
 type Result<T> = std::result::Result<T, ErrorGuaranteed>;
@@ -121,22 +118,6 @@ pub fn run(flags: &Flags) -> CompilationResult {
                     Ok(p) => p,
                     Err(_g) => continue,
                 };
-                for u in &program.uses {
-                    let uspan = spans.get(u.node_id);
-                    let i = match resolver.resolve_use(&dcx, p, &u.id.sym, uspan) {
-                        Ok(Some(i)) => i,
-                        // already included
-                        Ok(None) => continue,
-                        // skip if failure
-                        Err(_guar) => continue,
-                    };
-                    let iparser = etac_parse::InterfaceParser::new(&dcx, &mut spans);
-                    let interface = match parse_one(&logger, &dcx, i, LoadBlame::Use(uspan), iparser) {
-                        Ok(i) => i,
-                        Err(_g) => continue
-                    };
-                    interfaces.push(interface);
-                }
                 programs.push(program);
             },
             File::Interface(i) => {

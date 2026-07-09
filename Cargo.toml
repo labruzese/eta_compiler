@@ -37,6 +37,7 @@ etac_lexer    = { path = "compiler/etac_lexer" }
 etac_parse    = { path = "compiler/etac_parse" }
 etac_session  = { path = "compiler/etac_session" }
 etac_span     = { path = "compiler/etac_span" }
+etac_resolve  = { path = "compiler/etac_resolve" }
 etac_types_derive = { path = "proc_macros/etac_types_derive" }
 
 # TESTING DEPENDENCIES

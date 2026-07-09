@@ -13,7 +13,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use etac_errors::{DiagCtxt, etac_error};
+use etac_errors::{DiagCtxt, etac_error, ErrorGuaranteed};
 use etac_span::{FileId, InterfaceId, SourceId, Span};
 
 /// A classified command-line input.
@@ -88,7 +88,7 @@ impl Resolver {
         from: SourceId,
         name: &str,
         at: Span,
-    ) -> super::Result<Option<InterfaceId>> {
+    ) -> Result<Option<InterfaceId>, ErrorGuaranteed> {
         let file_name = format!("{name}.eti");
         let from_dir = Path::new(from.as_str())
             .parent()

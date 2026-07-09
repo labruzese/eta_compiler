@@ -11,6 +11,7 @@ etac_lexer.workspace   = true
 etac_parse.workspace   = true
 etac_session.workspace = true
 etac_span.workspace    = true
+etac_resolve.workspace = true
 log.workspace          = true
 
 [dev-dependencies]
