@@ -16,9 +16,9 @@ pub struct TeeLexer<I> {
     stopped: bool,
 }
 
-impl<'dcx, I: ILexer<'dcx>> ILexer<'dcx> for TeeLexer<I> {}
+impl<'dcx, 'src, I: ILexer<'dcx, 'src>> ILexer<'dcx, 'src> for TeeLexer<I> {}
 
-impl<'dcx, I: ILexer<'dcx>> Iterator for TeeLexer<I> {
+impl<'dcx, 'src, I: ILexer<'dcx, 'src>> Iterator for TeeLexer<I> {
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {

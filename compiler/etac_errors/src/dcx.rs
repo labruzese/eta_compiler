@@ -15,15 +15,15 @@ use std::fmt;
 
 use etac_span::{SourceCache, Span};
 
-use crate::emitter::{Emitter, HumanEmitter};
-use crate::{Level};
+use crate::Level;
+use crate::emitter::{Emitter, IoEmitter};
 
 #[cfg(debug_assertions)]
 use crate::drop_bomb::DropBomb;
 
 /// Proof that a compilation error was reported through a [`DiagCtxt`].
 ///
-/// Construct it only by *actually emitting* an error. 
+/// Construct it only by *actually emitting* an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ErrorGuaranteed(());
 
@@ -63,7 +63,7 @@ impl DiagCtxt {
     /// A context that renders to stderr.
     #[must_use]
     pub fn new(cache: &'static SourceCache) -> Self {
-        Self::with_emitter(cache, Box::new(HumanEmitter))
+        Self::with_emitter(cache, Box::new(IoEmitter::new(std::io::stderr())))
     }
 
     /// A context with a custom sink (example: [`BufferEmitter`](crate::BufferEmitter)).
@@ -71,7 +71,11 @@ impl DiagCtxt {
     pub fn with_emitter(cache: &'static SourceCache, emitter: Box<dyn Emitter>) -> Self {
         Self {
             sources: cache,
-            inner: RefCell::new(Inner { emitter, err_count: 0, warn_count: 0 }),
+            inner: RefCell::new(Inner {
+                emitter,
+                err_count: 0,
+                warn_count: 0,
+            }),
         }
     }
 
@@ -144,7 +148,7 @@ impl<'dcx> Diag<'dcx> {
             loc: Some(span),
             note: None,
             #[cfg(debug_assertions)]
-            bomb: DropBomb::new()
+            bomb: DropBomb::new(),
         }
     }
 
@@ -196,10 +200,7 @@ impl<'dcx> Diag<'dcx> {
     }
 
     /// Emit a fully-built [`Diagnostic`].
-    pub fn emit(
-        #[cfg_attr(not(debug_assertions), allow(unused_mut))] 
-        mut self
-    ) -> ErrorGuaranteed {
+    pub fn emit(#[cfg_attr(not(debug_assertions), allow(unused_mut))] mut self) -> ErrorGuaranteed {
         let level = self.level;
         let mut inner = self.dcx.inner.borrow_mut();
         match level {
@@ -209,7 +210,7 @@ impl<'dcx> Diag<'dcx> {
             Level::Warning => {
                 inner.warn_count += 1;
             }
-            _ => ()
+            _ => (),
         }
 
         #[cfg(debug_assertions)]
@@ -220,10 +221,7 @@ impl<'dcx> Diag<'dcx> {
     }
 
     /// Throw the diagnostic away deliberately (drop without panic in debug mode)
-    pub fn cancel(
-        #[cfg_attr(not(debug_assertions), allow(unused_mut))]
-        mut self
-    ) { 
+    pub fn cancel(#[cfg_attr(not(debug_assertions), allow(unused_mut))] mut self) {
         #[cfg(debug_assertions)]
         self.bomb.defuse();
     }

@@ -9,9 +9,9 @@ pub enum ULexer<I> {
     Tee(TeeLexer<I>),
 }
 
-impl<'dcx, I: ILexer<'dcx>> ILexer<'dcx> for ULexer<I> {}
+impl<'dcx, 'src, I: ILexer<'dcx, 'src>> ILexer<'dcx, 'src> for ULexer<I> {}
 
-impl<'dcx, I: ILexer<'dcx>> Iterator for ULexer<I> {
+impl<'dcx, 'src, I: ILexer<'dcx, 'src>> Iterator for ULexer<I> {
     type Item = I::Item;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -28,14 +28,14 @@ pub enum UParser<I> {
     Tee(TeeParser<I>),
 }
 
-impl<'dcx, I> IParser<'dcx> for UParser<I>
+impl<'dcx, 'src, I> IParser<'dcx, 'src> for UParser<I>
 where
-    I: IParser<'dcx> ,
+    I: IParser<'dcx, 'src> ,
     I::Out: std::fmt::Display,
 {
     type Out = I::Out;
 
-    fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> etac_parse::Parsed<Self::Out> {
+    fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> etac_parse::Parsed<Self::Out> {
         match self {
             UParser::Raw(parser) => parser.parse(lexer),
             UParser::Tee(parser) => parser.parse(lexer),

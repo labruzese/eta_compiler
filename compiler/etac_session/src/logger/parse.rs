@@ -14,14 +14,14 @@ pub struct TeeParser<I> {
     stopped: bool,
 }
 
-impl<'dcx, InnerParser> IParser<'dcx> for TeeParser<InnerParser>
+impl<'dcx, 'src, InnerParser> IParser<'dcx, 'src> for TeeParser<InnerParser>
 where
-    InnerParser: IParser<'dcx>,
+    InnerParser: IParser<'dcx, 'src>,
     InnerParser::Out: std::fmt::Display,
 {
     type Out = InnerParser::Out;
 
-    fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> etac_parse::Parsed<Self::Out> {
+    fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> etac_parse::Parsed<Self::Out> {
         let result = self.inner.parse(lexer);
         if self.stopped || self.writer.is_none() {
             return result;
@@ -71,9 +71,9 @@ impl Logger {
     /// failure it writes the first syntax error as `line:col error:<message>`. When parse
     /// logging is off the wrapper is a transparent pass-through, so the caller's type
     /// doesn't change with the flag.
-    pub fn tee_parser<'dcx, I>(&'dcx self, file: FileId, sources: &'static SourceCache, inner: I) -> TeeParser<I>
+    pub fn tee_parser<'dcx, 'src, I>(&'dcx self, file: FileId, sources: &'static SourceCache, inner: I) -> TeeParser<I>
     where
-        I: IParser<'dcx>,
+        I: IParser<'dcx, 'src>,
     {
         TeeParser {
             source: sources,

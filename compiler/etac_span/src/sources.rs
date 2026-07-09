@@ -132,18 +132,7 @@ impl SourceCache {
             .expect("span resolved to a file that was never loaded")
             .source;
 
-        let (_line, linen, coln) = source
-            .get_byte_line(local_range.start as usize)
-            .map(|(a, b, c)| {
-                (
-                    a,
-                    u32::try_from(b).expect("requested line/col is out of bounds"),
-                    u32::try_from(c).expect("requested line/col is out of bounds"),
-                )
-            })
-            .expect("requested line/col is out of bounds");
-
-        Ok((linen + 1, coln + 1))
+        lc_from_ariadne_source(source, local_range.start as usize)
     }
 
     /// Load `id` if needed and return the cached entry. 
@@ -198,4 +187,20 @@ impl Default for SourceCache {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[doc(hidden)]
+pub fn lc_from_ariadne_source(source: &ariadne::Source, at: usize) -> io::Result<(u32, u32)> {
+    let (_line, linen, coln) = source
+        .get_byte_line(at)
+        .map(|(a, b, c)| {
+            (
+                a,
+                u32::try_from(b).expect("requested line/col is out of bounds"),
+                u32::try_from(c).expect("requested line/col is out of bounds"),
+            )
+        })
+        .expect("requested line/col is out of bounds");
+
+    Ok((linen + 1, coln + 1))
 }

@@ -5,7 +5,7 @@ use etac_lexer::Token;
 use etac_span::Span;
 use crate::{ParseState, lvalue_to_expr};
 
-grammar<'dcx, 'st>(state: &mut ParseState<'dcx, 'st>);
+grammar<'dcx, 'src, 'st>(state: &mut ParseState<'dcx, 'src, 'st>);
 
 // ---- macros ----
 
@@ -33,7 +33,7 @@ extern {
     type Location = u32;
     type Error = Diag<'dcx>;
 
-    enum Token<'static> {
+    enum Token<'src> {
         "use"     => Token::KeywordUse,
         "length"  => Token::KeywordLength,
         "while"   => Token::KeywordWhile,
@@ -75,7 +75,7 @@ extern {
         "boollit" => Token::BoolLiteral(<bool>),
         "charlit" => Token::CharLiteral(<u32>),
         "strlit"  => Token::StrLiteral(<String>),
-        "ident"   => Token::Identifier(<&'static str>),
+        "ident"   => Token::Identifier(<&'src str>),
         "intlit"  => Token::Integer(<i64>),
     }
 }

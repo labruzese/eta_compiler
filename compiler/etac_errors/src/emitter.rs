@@ -3,7 +3,7 @@
 //! An [`Emitter`] is the *only* thing that turns a [`Diagnostic`] into output. The
 //! [`DiagCtxt`](crate::DiagCtxt) owns one and routes every diagnostic through it
 
-use std::{cell::RefCell, convert::Infallible, rc::Rc};
+use std::{cell::RefCell, convert::Infallible, io::Write, rc::Rc};
 
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
 use etac_span::Span;
@@ -17,9 +17,17 @@ pub trait Emitter {
 
 /// Renders diagnostics to stderr with source snippets via `ariadne`.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct HumanEmitter;
+pub struct IoEmitter<W: Write> {
+    writer: W
+}
 
-impl Emitter for HumanEmitter {
+impl<W: Write> IoEmitter<W> {
+    pub fn new(writer: W) -> Self {
+        Self { writer }
+    }
+}
+
+impl<W: Write> Emitter for IoEmitter<W> {
     fn emit(&mut self, diag: Diag<'_>) {
         let kind = match diag.level {
             Level::Error => ReportKind::Error,

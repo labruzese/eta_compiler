@@ -42,7 +42,7 @@ fn load_file(dcx: &DiagCtxt, file: FileId, blame: LoadBlame) -> Result<(u32, &'s
 
 
 
-fn parse_one<'dcx, 'src, P>(
+fn parse_one<'dcx, P>(
     logger: &'dcx Logger,
     dcx: &'dcx DiagCtxt,
     file: FileId,
@@ -50,9 +50,8 @@ fn parse_one<'dcx, 'src, P>(
     parser: P,
 ) -> Result<P::Out>
 where
-    P: IParser<'dcx>,
+    P: IParser<'dcx, 'static>,
     P::Out: std::fmt::Display,
-    'src: 'dcx,
 {
     let (base, source) = load_file(dcx, file, blame)?;
 

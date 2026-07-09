@@ -31,14 +31,14 @@ impl<Out> Parsed<Out> {
 }
 
 /// Mutable state threaded through every grammar action.
-pub(crate) struct ParseState<'dcx, 'st> {
+pub(crate) struct ParseState<'dcx, 'src, 'st> {
     pub diagc: &'dcx DiagCtxt,
     pub spans: &'st mut SpanTable,
-    pub lalrpop_errs: Vec<ErrorRecovery<u32, Token<'static>, Diag<'dcx>>>,
+    pub lalrpop_errs: Vec<ErrorRecovery<u32, Token<'src>, Diag<'dcx>>>,
     pub etac_errs: Vec<Diag<'dcx>>,
 }
 
-impl<'dcx, 'st> ParseState<'dcx, 'st> {
+impl<'dcx, 'src, 'st> ParseState<'dcx, 'src, 'st> {
     #[must_use]
     pub fn new(diagnostic_context: &'dcx DiagCtxt, spans: &'st mut SpanTable) -> Self {
         ParseState {
@@ -52,10 +52,10 @@ impl<'dcx, 'st> ParseState<'dcx, 'st> {
 
 pub use grammar::__ToTriple;
 
-pub trait IParser<'dcx> {
+pub trait IParser<'dcx, 'src> {
     type Out;
 
-    fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> Parsed<Self::Out>;
+    fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> Parsed<Self::Out>;
 
     fn errors_mut(&mut self) -> &mut [Diag<'dcx>];
 
@@ -76,19 +76,19 @@ macro_rules! impl_iparser {
         impl_iparser!(@inner ($full) ($($rest)::+) $out);
     };
     (@inner ($full:path) ($name:ident) $out:ty) => {
-        pub struct $name<'dcx, 'st> {
-            state: ParseState<'dcx, 'st>
+        pub struct $name<'dcx, 'src, 'st> {
+            state: ParseState<'dcx, 'src, 'st>
         }
-        impl<'dcx, 'st> $name<'dcx, 'st> {
+        impl<'dcx, 'src, 'st> $name<'dcx, 'src, 'st> {
             #[must_use]
             pub fn new(diagc: &'dcx DiagCtxt, spans: &'st mut SpanTable) -> Self {
                 $name { state: ParseState::new(diagc, spans) }
             }
         }
-        impl<'dcx, 'st> IParser<'dcx> for $name<'dcx, 'st> {
+        impl<'dcx, 'src, 'st> IParser<'dcx, 'src> for $name<'dcx, 'src, 'st> {
             type Out = $out;
 
-            fn parse(&mut self, lexer: &mut impl ILexer<'dcx>) -> Parsed<Self::Out> {
+            fn parse(&mut self, lexer: &mut impl ILexer<'dcx, 'src>) -> Parsed<Self::Out> {
                 let parse = <$full>::parse(&<$full>::new(), &mut self.state, lexer);
                 let mut recovered = false;
                 for e in std::mem::take(&mut self.state.lalrpop_errs) {
@@ -140,9 +140,9 @@ pub(crate) fn lvalue_to_expr(lv: LValue, spans: &mut SpanTable) -> Expr {
 }
 
 /// LALRPOP error to [`Diag`]
-fn to_diag<'dcx>(
+fn to_diag<'dcx, 'src>(
     diagc: &'dcx DiagCtxt,
-    err: ParseError<u32, Token<'static>, Diag<'dcx>>,
+    err: ParseError<u32, Token<'src>, Diag<'dcx>>,
 ) -> Diag<'dcx> {
     use ParseError::*;
     match err {
