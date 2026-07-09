@@ -118,7 +118,7 @@ pub Interface: Interface = {
 InterfaceItem: InterfaceItem = {
     <md:MethodDecl> => InterfaceItem::new(
 	state.spans.dup(md.node_id),
-	InterfaceItemKind::Decl(md)
+	InterfaceItemKind::MethodDecl(md)
     ),
     <l:@L> <e:!> <r:@R> => {
 	state.lalrpop_errs.push(e);

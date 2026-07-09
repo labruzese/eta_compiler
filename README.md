@@ -1,3 +1,6 @@
+# todo
+look at adding error recovery to all kind stuff
+
 # etac
 
 A compiler for the Eta programming language, written in Rust.

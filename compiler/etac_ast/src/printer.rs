@@ -85,7 +85,7 @@ impl ToDoc for Interface {
 impl ToDoc for InterfaceItem {
     fn to_doc(&self) -> RcDoc<'static, ()> {
         match &self.kind {
-            InterfaceItemKind::Decl(d) => d.to_doc(),
+            InterfaceItemKind::MethodDecl(d) => d.to_doc(),
             InterfaceItemKind::Error => d!("Error"),
         }
     }

@@ -1,24 +1,31 @@
 use super::types;
-use crate::context::Env;
+use crate::context::{Env, FnEntry};
 use etac_ast::*;
+use etac_errors::etac_error;
 
 // collects the global scope of a program
-pub fn collect(prog: &Program) -> Env {
-    let mut env = Env::new();
-    let definitions = prog.definitions;
+pub fn add_interface(env: &mut Env, interface: &Interface) {
+    for item in &interface.items {
+
+    }
+}
+
+pub fn collect_global(env: &mut Env, prog: &Program) {
+    let definitions = &prog.definitions;
     for def in definitions {
-        let kind = def.kind;
-        match kind {
-            DefinitionKind::Method(m) => env.insert_ident(
-                m.id.sym.clone(),
-                types::IdTy::Fn(types::FnTy {
-                    from: m.params.iter().map(|decl| (&decl.typ.kind).into()).collect(),
-                    to: m.ret_types.iter().map(|typ| (&typ.kind).into()).collect(),
-                }),
-            ),
-            DefinitionKind::GlobDecl(gd) => env.insert_ident(gd.id.sym.clone(), types::IdTy::Var((&typ.kind).into())),
-            DefinitionKind::Error => (),
+        match &def.kind {
+            DefinitionKind::Method(m) => {
+                env.scopes.declare_fn(
+                    m.node_id(),
+                    m.id.sym.clone(),
+                    types::FnTy {
+                        from: m.params.iter().map(|decl| (&decl.typ.kind).into()).collect(),
+                        to: m.ret_types.iter().map(|typ| (&typ.kind).into()).collect(),
+                    },
+                );
+            }
+            DefinitionKind::GlobDecl(gd) => { gd.typecheck(); }
+            DefinitionKind::Error => (), // Error already recorded
         }
     }
-    env
 }

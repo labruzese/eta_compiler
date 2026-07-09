@@ -123,7 +123,7 @@ node! {
 
 #[derive(Debug, Clone)]
 pub enum InterfaceItemKind {
-    Decl(MethodDecl),
+    MethodDecl(MethodDecl),
     Error,
 }
 

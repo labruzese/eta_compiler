@@ -13,7 +13,6 @@
 use std::cell::RefCell;
 use std::fmt;
 
-use etac_ast::SpanTable;
 use etac_span::{SourceCache, Span};
 
 use crate::emitter::{Emitter, HumanEmitter};
@@ -56,7 +55,6 @@ pub(crate) struct Inner {
 /// The single diagnostic sink for a compilation. Renders spans against the
 /// process-global [`SOURCES`](etac_span::SOURCES) cache which carries the static lifetime.
 pub struct DiagCtxt {
-    pub spans: SpanTable,
     pub(crate) sources: &'static SourceCache,
     pub(crate) inner: RefCell<Inner>,
 }
@@ -64,15 +62,14 @@ pub struct DiagCtxt {
 impl DiagCtxt {
     /// A context that renders to stderr.
     #[must_use]
-    pub fn new(source_cache: &'static SourceCache, span_table: SpanTable) -> Self {
-        Self::with_emitter(source_cache, span_table, Box::new(HumanEmitter))
+    pub fn new(cache: &'static SourceCache) -> Self {
+        Self::with_emitter(cache, Box::new(HumanEmitter))
     }
 
     /// A context with a custom sink (example: [`BufferEmitter`](crate::BufferEmitter)).
     #[must_use]
-    pub fn with_emitter(cache: &'static SourceCache, span_table: SpanTable, emitter: Box<dyn Emitter>) -> Self {
+    pub fn with_emitter(cache: &'static SourceCache, emitter: Box<dyn Emitter>) -> Self {
         Self {
-            spans: span_table,
             sources: cache,
             inner: RefCell::new(Inner { emitter, err_count: 0, warn_count: 0 }),
         }
@@ -234,7 +231,7 @@ impl<'dcx> Diag<'dcx> {
 
 impl Default for DiagCtxt {
     fn default() -> Self {
-        Self::new(etac_span::sources(), SpanTable::new())
+        Self::new(etac_span::sources())
     }
 }
 

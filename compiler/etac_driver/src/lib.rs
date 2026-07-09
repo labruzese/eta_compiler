@@ -98,8 +98,8 @@ where
 
 pub fn run(flags: &Flags) -> CompilationResult {
     let logger = Logger::new(flags);
-    let spans = SpanTable::new();
-    let dcx = DiagCtxt::new(etac_span::sources(), spans);
+    let mut spans = SpanTable::new();
+    let dcx = DiagCtxt::new(etac_span::sources());
 
 
     let mut resolver = Resolver::new(&flags.source_path, &flags.lib_path);
@@ -116,7 +116,7 @@ pub fn run(flags: &Flags) -> CompilationResult {
     for file in files {
         match file {
             File::Program(p) => {
-                let pparser = etac_parse::ProgramParser::new(&dcx);
+                let pparser = etac_parse::ProgramParser::new(&dcx, &mut spans);
                 let program = match parse_one(&logger, &dcx, p, LoadBlame::CommandLine, pparser) {
                     Ok(p) => p,
                     Err(_g) => continue,
@@ -130,7 +130,7 @@ pub fn run(flags: &Flags) -> CompilationResult {
                         // skip if failure
                         Err(_guar) => continue,
                     };
-                    let iparser = etac_parse::InterfaceParser::new(&dcx);
+                    let iparser = etac_parse::InterfaceParser::new(&dcx, &mut spans);
                     let interface = match parse_one(&logger, &dcx, i, LoadBlame::Use(uspan), iparser) {
                         Ok(i) => i,
                         Err(_g) => continue
