@@ -13,45 +13,34 @@ macro_rules! already_declared {
 
 use etac_types_derive::EtaType;
 
-macro_rules! typecheck_wrapper {
-    ($ast_node:tt.$field:ident: $inner_type:ty) => {
+macro_rules! delegate_typecheck {
+    ($ast_node:tt.$field:ident { $($variant:ident),+ $(,)? }) => {
         paste::paste! {
+            #[derive(Debug, Clone, EtaType)]
+            pub enum [<$ast_node Type>] {
+                $($variant(<$variant as Typecheck>::Ty)),+
+            }
             impl Typecheck for $ast_node {
-                type Ty = <$inner_type as Typecheck>::Ty;
+                type Ty = [<$ast_node Type>];
                 fn typecheck<'e>(&self, env: &'e mut context::Env) -> Result<&'e Self::Ty> {
-                    self.$field.typecheck(env)
+                    match &self.$field {
+                        $([<$ast_node Kind>]::$variant(inner) => {
+                            let ty = [<$ast_node Type>]::$variant(inner.typecheck(env)?.clone());
+                            let id = inner.node_id();
+                            Ok(env.types.assign_type(id, Box::new(ty)))
+                        })+
+                        [<$ast_node Kind>]::Error => Err(unsafe { ErrorGuaranteed::claim_already_emitted() })
+                    }
                 }
             }
         }
     };
 }
 
-macro_rules! typecheck_kind {
-    ($ast_kind_node:ty { $($variant:ident),+ $(,)? }) => { paste::paste! {
-        #[derive(Debug, Clone, EtaType)]
-        pub enum [<$ast_kind_node Type>] {
-            $($variant(<$variant as Typecheck>::Ty)),+
-        }
-        impl Typecheck for $ast_kind_node {
-            type Ty = [<$ast_kind_node Type>];
-            fn typecheck<'e>(&self, env: &'e mut context::Env) -> Result<&'e Self::Ty> {
-                match self {
-                    $($ast_kind_node::$variant(inner) => {
-                        let ty = [<$ast_kind_node Type>]::$variant(inner.typecheck(env)?.clone());
-                        let id = inner.node_id();
-                        Ok(env.types.assign_type(id, Box::new(ty)))
-                    })+
-                    $ast_kind_node::Error => Err(unsafe { ErrorGuaranteed::claim_already_emitted() })
-                }
-            }
-        }
-    }}
-}
-
 type Result<T> = std::result::Result<T, ErrorGuaranteed>;
 
 /// Can be typechecked.
-trait Typecheck {
+trait Typecheck: etac_ast::AstNode {
     type Ty: types::EtaType;
     /// Updates enviornment by typechecking itself.
     /// Returns the deduced type of itself
@@ -78,10 +67,8 @@ impl Typecheck for Use {
     }
 }
 
-typecheck_wrapper!(Definition.kind: DefinitionKind);
-typecheck_kind!(DefinitionKind { Method, GlobDecl });
-typecheck_wrapper!(InterfaceItem.kind: InterfaceItemKind);
-typecheck_kind!(InterfaceItemKind { MethodDecl });
+delegate_typecheck!(Definition.kind { Method, GlobDecl });
+delegate_typecheck!(InterfaceItem.kind { MethodDecl });
 
 impl Typecheck for MethodDecl {
     type Ty = types::FnTy;
@@ -133,8 +120,28 @@ impl Typecheck for GlobDecl {
     }
 }
 
-// Value
-// ValueKind
+#[derive(Debug,Clone,EtaType)]
+pub enum ValueType {
+    Int(types::IntTy),
+    Bool(types::BoolTy)
+}
+impl Typecheck for Value {
+    type Ty = ValueType;
+    fn typecheck<'e>(&self,env: &'e mut context::Env) -> Result<&'e Self::Ty>{
+        match &self.kind {
+            ValueKind::Int(_value) => {
+                // todo: validation on the int
+                let ty = ValueType::Int(types::IntTy);
+                Ok(env.types.assign_type(self.node_id(), Box::new(ty)))
+            }
+            ValueKind::Bool(_) => {
+                let ty = ValueType::Bool(types::BoolTy);
+                Ok(env.types.assign_type(self.node_id(), Box::new(ty)))
+            }
+        }
+    }
+}
+
 // Decl
 impl Typecheck for Type {
     type Ty = types::VarTy;
