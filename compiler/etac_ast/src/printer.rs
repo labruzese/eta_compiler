@@ -156,6 +156,7 @@ impl ToDoc for Type {
             TypeKind::Array { of, size: None } => parens([d!("[]"), of.to_doc()]),
             TypeKind::Int => d!("int"),
             TypeKind::Bool => d!("bool"),
+            TypeKind::Error => d!("Error"),
         }
     }
 }

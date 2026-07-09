@@ -70,6 +70,10 @@ impl From<&etac_ast::TypeKind> for VarTy {
             etac_ast::TypeKind::Array { of, .. } => VarTy::Array(ArrayTy { of: Box::new(VarTy::from(&of.kind)) }),
             etac_ast::TypeKind::Int => VarTy::Int(IntTy),
             etac_ast::TypeKind::Bool => VarTy::Bool(BoolTy),
+            // A parser-recovered type carries no information; it becomes the
+            // error type so downstream checks degrade quietly instead of
+            // cascading (the diagnostic was already emitted at parse time).
+            etac_ast::TypeKind::Error => VarTy::Err(ErrTy),
         }
     }
 }

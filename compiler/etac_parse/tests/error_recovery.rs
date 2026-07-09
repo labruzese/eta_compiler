@@ -284,6 +284,104 @@ fn broken_body_does_not_eat_following_method() {
     assert!(sexpr.contains("(g () () ((return)))"), "g is untouched: {sexpr}");
 }
 
+// Type-level recovery (! => Type::Error)
+#[test]
+fn broken_param_type_recovers_and_keeps_siblings() {
+    // The middle parameter's type annotation is missing. The type-level `!`
+    // fires for `b`, but the decl keeps its identifier (`(b Error)`) and the
+    // valid params on either side -- plus the whole body -- survive. Without
+    // this recovery the entire method would collapse to a Definition::Error.
+    let p = expect_recovered(run_parse!(
+        "f(a: int, b: , c: bool) { return }",
+        ".eta",
+        ProgramParser
+    ));
+    assert_eq!(p.error_count(), 1, "expected exactly one error diagnostic");
+    assert_eq!(p.error_node_count(), 1, "only the broken type should become an Error node");
+
+    let sexpr = p.output_sexpr().unwrap();
+    assert!(
+        sexpr.contains("(f ((a int) (b Error) (c bool)) () ((return)))"),
+        "broken param type recovers as Type::Error while siblings and body survive: {sexpr}"
+    );
+    assert!(p.first_error_pos().is_some(), "error should carry a source location");
+}
+
+#[test]
+fn broken_return_type_recovers() {
+    // The `:` promises a return type but none follows. The type-level `!`
+    // fires inside the return-type list, and the method (header + body)
+    // survives with a single Type::Error standing in for the return type.
+    let p = expect_recovered(run_parse!("f(): { return }", ".eta", ProgramParser));
+    assert!(p.error_count() >= 1);
+    assert_eq!(p.error_node_count(), 1);
+
+    let sexpr = p.output_sexpr().unwrap();
+    assert!(
+        sexpr.contains("(f () (Error) ((return)))"),
+        "broken return type recovers as Type::Error: {sexpr}"
+    );
+}
+
+#[test]
+fn broken_return_type_keeps_valid_siblings() {
+    // A return-type *list* `: , int` whose first element is missing. Recovery
+    // is localized to the first slot; the trailing `int` is preserved.
+    let p = expect_recovered(run_parse!("f(x: int): , int { return 0 }", ".eta", ProgramParser));
+    assert_eq!(p.error_count(), 1);
+    assert_eq!(p.error_node_count(), 1);
+
+    let sexpr = p.output_sexpr().unwrap();
+    assert!(
+        sexpr.contains("(f ((x int)) (Error int) ((return 0)))"),
+        "only the broken return-type slot errors; the sibling type survives: {sexpr}"
+    );
+}
+
+#[test]
+fn broken_local_decl_type_does_not_eat_rhs() {
+    // A local declaration whose type is missing before an assignment. The
+    // type-level `!` must recover *just* the type and stop at `=`, so the
+    // right-hand side `5` is still parsed as the assigned value.
+    let p = expect_recovered(run_parse!("main() { x: = 5 }", ".eta", ProgramParser));
+    assert_eq!(p.error_count(), 1);
+    assert_eq!(p.error_node_count(), 1);
+
+    let sexpr = p.output_sexpr().unwrap();
+    assert!(
+        sexpr.contains("(= (x Error) 5)"),
+        "type recovery must not swallow the assignment's RHS: {sexpr}"
+    );
+}
+
+#[test]
+fn broken_array_element_type_recovers() {
+    // A parameter declared as an array whose element type is malformed. The
+    // type-level `!` collapses the broken type to a single Error node while the
+    // method signature and body remain intact.
+    let p = expect_recovered(run_parse!("g(x: [ ) { return }", ".eta", ProgramParser));
+    assert_eq!(p.error_count(), 1);
+    assert_eq!(p.error_node_count(), 1);
+
+    let sexpr = p.output_sexpr().unwrap();
+    assert!(
+        sexpr.contains("(g ((x Error)) () ((return)))"),
+        "a malformed array type recovers as Type::Error: {sexpr}"
+    );
+}
+
+#[test]
+fn clean_types_have_no_error_nodes() {
+    // Guard against the type-level `!` firing spuriously on valid input:
+    // arrays (sized and unsized), int, and bool must all parse cleanly.
+    let sexpr = expect_ok(run_parse!(
+        "f(a: int, b: bool, c: int[], d: int[3]): bool { return true }",
+        ".eta",
+        ProgramParser
+    ));
+    assert!(!sexpr.contains("Error"), "valid types must not produce Error nodes: {sexpr}");
+}
+
 #[test]
 fn interface_recovers_bad_declaration() {
     let p = expect_recovered(run_parse!("g():int\nf( ) )", ".eti", InterfaceParser));

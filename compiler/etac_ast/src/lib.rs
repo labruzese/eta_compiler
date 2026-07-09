@@ -188,6 +188,7 @@ pub enum TypeKind {
     Array { of: Box<Type>, size: Option<Box<Expr>> },
     Int,
     Bool,
+    Error,
 }
 
 impl TypeKind {

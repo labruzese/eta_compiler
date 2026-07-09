@@ -132,6 +132,9 @@ impl Typecheck for TypeKind {
             TypeKind::Array { of, size } => types::VarTy::Array(of.typecheck(env).or(types::VarTy::Err(types::ErrTy))),
             TypeKind::Int => types::VarTy::Int(types::IntTy),
             TypeKind::Bool => types::VarTy::Bool(types::BoolTy),
+            // Recovered at parse time (diagnostic already emitted); propagate
+            // the error rather than re-reporting.
+            TypeKind::Error => return Err(unsafe { ErrorGuaranteed::claim_already_emitted() }),
         }
     }
 }

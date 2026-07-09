@@ -192,6 +192,14 @@ GlobalValue: Value = {
 Type: Type = {
     TypeSized,
     TypeUnsized,
+    // Recover a broken type in place (e.g. a missing/garbled annotation in a
+    // param list, local decl, or return-type list) so the enclosing `Decl`
+    // keeps its identifier and the surrounding signature/body still parse,
+    // instead of collapsing the whole method to a Definition::Error.
+    <l:@L> <e:!> <r:@R> => {
+	state.lalrpop_errs.push(e);
+	Type::new(state.spans.alloc(Span::new(l, r)), TypeKind::Error)
+    }
 }
 
 
