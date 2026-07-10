@@ -28,8 +28,6 @@ impl Span {
         }
     }
 
-    /// Smallest span covering both `self` and `other`.
-    #[must_use]
     pub fn to(self, other: Span) -> Span {
         Span {
             lo: self.lo.min(other.lo),

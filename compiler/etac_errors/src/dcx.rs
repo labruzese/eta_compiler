@@ -13,7 +13,7 @@
 use std::cell::RefCell;
 use std::fmt;
 
-use etac_span::{FileId, SourceCache, Span};
+use etac_span::{SourceCache, Span};
 
 use crate::Level;
 use crate::emitter::{Emitter, IoEmitter};
@@ -46,7 +46,7 @@ impl ErrorGuaranteed {
     }
 }
 
-pub(crate) struct Inner<Cache: ariadne::Cache<FileId>> {
+pub(crate) struct Inner<Cache: SourceCache> {
     emitter: Box<dyn Emitter<Cache>>,
     err_count: usize,
     warn_count: usize,
@@ -54,16 +54,16 @@ pub(crate) struct Inner<Cache: ariadne::Cache<FileId>> {
 
 /// The single diagnostic sink for a compilation. Renders spans against the
 /// process-global [`SOURCES`](etac_span::SOURCES) cache which carries the static lifetime.
-pub struct DiagCtxt<Cache: ariadne::Cache<FileId>> {
+pub struct DiagCtxt<Cache: SourceCache> {
     pub(crate) sources: Cache,
     pub(crate) inner: RefCell<Inner<Cache>>,
 }
 
-impl<Cache: ariadne::Cache<FileId>> DiagCtxt<Cache> {
+impl<Cache: SourceCache> DiagCtxt<Cache> {
     /// A context that renders to stderr.
     #[must_use]
     pub fn new(cache: Cache) -> Self {
-        Self::with_emitter(cache, Box::new(IoEmitter::new(std::io::stderr())))
+        Self::with_emitter(cache, Box::new(IoEmitter::new(std::io::stderr(), true)))
     }
 
     /// A context with a custom sink (example: [`BufferEmitter`](crate::BufferEmitter)).
@@ -123,7 +123,7 @@ impl<Cache: ariadne::Cache<FileId>> DiagCtxt<Cache> {
 /// A Diag borrows the diagnostic context [`'dcx`]; the [`SourceCache`] borrow is `'static`.
 #[must_use = "a Diag does nothing until you call `.emit()` (or `.cancel()` it)"]
 #[derive(Debug)]
-pub struct Diag<'dcx, Cache: ariadne::Cache<FileId>> {
+pub struct Diag<'dcx, Cache: SourceCache> {
     pub(crate) dcx: &'dcx DiagCtxt<Cache>,
     pub level: Level,
     pub message: String,
@@ -136,7 +136,7 @@ pub struct Diag<'dcx, Cache: ariadne::Cache<FileId>> {
     bomb: DropBomb,
 }
 
-impl<'dcx, Cache: ariadne::Cache<FileId>> Diag<'dcx, Cache> {
+impl<'dcx, Cache: SourceCache> Diag<'dcx, Cache> {
     /// Create a new diagnostic at a location with a message.
     fn new(dcx: &'dcx DiagCtxt<Cache>, level: Level, span: Span, message: impl Into<String>) -> Self {
         Self {
@@ -227,13 +227,7 @@ impl<'dcx, Cache: ariadne::Cache<FileId>> Diag<'dcx, Cache> {
     }
 }
 
-impl Default for DiagCtxt<&SourceCache> {
-    fn default() -> Self {
-        Self::new(etac_span::sources())
-    }
-}
-
-impl<Cache: ariadne::Cache<FileId>> fmt::Debug for DiagCtxt<Cache> {
+impl<Cache: SourceCache> fmt::Debug for DiagCtxt<Cache> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner = self.inner.borrow();
         f.debug_struct("DiagCtxt")

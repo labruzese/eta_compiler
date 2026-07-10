@@ -7,7 +7,7 @@ use crate::{FileId, Span, sources::SourceCache};
 /// The process-wide [`SourceCache`]
 ///
 /// One per process, never evicted.
-static SOURCES: LazyLock<GlobalCache> = LazyLock::new(GlobalCache::new);
+static SOURCES: LazyLock<GlobalCache> = LazyLock::new(GlobalCache::default);
 
 /// The global [`SOURCES`] cache, as the `&'static` borrow everything plumbs.
 #[must_use]
@@ -15,22 +15,14 @@ pub fn sources() -> &'static GlobalCache {
     &SOURCES
 }
 
+#[derive(Default)]
 pub struct GlobalCache {
     files: FrozenMap<FileId, Box<ariadne::Source<String>>>,
     by_name: DashMap<&'static str, FileId>,
     by_offset: SkipMap<u32, &'static str>,
     alloc: AtomicU32,
 }
-impl GlobalCache {
-    pub fn new() -> Self {
-        Self {
-            files: FrozenMap::new(),
-            by_name: DashMap::new(),
-            by_offset: SkipMap::new(),
-            alloc: AtomicU32::new(0),
-        }
-    }
-}
+
 impl SourceCache for GlobalCache {
     fn contains(&self, display_name: &str) -> Option<FileId> {
         self.by_name.get(display_name).map(|e| *e.value())

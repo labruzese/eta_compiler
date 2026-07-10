@@ -6,34 +6,37 @@
 use std::{cell::RefCell, convert::Infallible, io::Write, rc::Rc};
 
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
-use etac_span::{FileId, Span};
+use etac_span::{AriadneAdapter, SourceCache, Span};
 
 use crate::{Diag, Level};
 
 /// Can take ownership of a diagnostic to emit it
-pub trait Emitter<Cache> {
-    fn emit(&mut self, diag: Diag<'_, Cache>);
+pub trait Emitter<C: SourceCache> {
+    fn emit(&mut self, diag: Diag<'_, C>);
 }
 
 /// Renders diagnostics to stderr with source snippets via `ariadne`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct IoEmitter<W: Write> {
-    writer: W
+    writer: W,
+    color: bool
 }
 
 impl<W: Write> IoEmitter<W> {
-    pub fn new(writer: W) -> Self {
-        Self { writer }
+    pub fn new(writer: W, use_color: bool) -> Self {
+        Self { writer, color: use_color }
     }
 }
 
-impl<Cache, W: Write> Emitter<Cache> for IoEmitter<W> {
-    fn emit(&mut self, diag: Diag<'_, Cache>) {
+impl<C: SourceCache, W: Write> Emitter<C> for IoEmitter<W> {
+    fn emit(&mut self, diag: Diag<'_, C>) {
         let kind = match diag.level {
             Level::Error => ReportKind::Error,
             Level::Warning => ReportKind::Warning,
             Level::Note => ReportKind::Advice,
         };
+        
+        let with_color = self.color;
 
         if let Some(loc) = diag.loc {
             // resolve() returns byte ranges; tell ariadne to interpret span
@@ -42,9 +45,11 @@ impl<Cache, W: Write> Emitter<Cache> for IoEmitter<W> {
             // ariadne defaults to IndexType::Char and misreports columns
             // whenever multibyte UTF-8 characters appear before the error
             // in the same file.
-            let byte_config = Config::default().with_index_type(IndexType::Byte);
-            let mut b = Report::build(kind, diag.dcx.sources.reportable_span_for(loc))
-                .with_config(byte_config)
+            let config = Config::default()
+                .with_index_type(IndexType::Byte)
+                .with_color(with_color);
+            let mut b = Report::build(kind, diag.dcx.sources.reportable_span(loc))
+                .with_config(config)
                 .with_message(&diag.message);
             if let Some(c) = &diag.code {
                 b = b.with_code(c);
@@ -53,12 +58,16 @@ impl<Cache, W: Write> Emitter<Cache> for IoEmitter<W> {
                 b = b.with_note(n);
             }
             for (span, msg, color) in &diag.labels {
-                b = b.with_label(Label::new(diag.dcx.sources.reportable_span_for(*span)).with_message(msg).with_color(*color));
+                b = b.with_label(Label::new(diag.dcx.sources.reportable_span(*span)).with_message(msg).with_color(*color));
             }
-            let _ = b.finish().eprint(diag.dcx.sources);
+            let _ = b.finish().write(AriadneAdapter(&diag.dcx.sources), &mut self.writer);
         } else {
             static NO_SPAN: NoSpan = NoSpan;
-            let mut b = Report::build(kind, NO_SPAN).with_message(&diag.message);
+            let config = Config::default()
+                .with_color(with_color);
+            let mut b = Report::build(kind, NO_SPAN)
+                .with_config(config)
+                .with_message(&diag.message);
             if let Some(c) = &diag.code {
                 b = b.with_code(c);
             }
@@ -68,7 +77,7 @@ impl<Cache, W: Write> Emitter<Cache> for IoEmitter<W> {
             for (_span, msg, color) in &diag.labels {
                 b = b.with_label(Label::new(NO_SPAN).with_message(msg).with_color(*color));
             }
-            let _ = b.finish().eprint(NoCache);
+            let _ = b.finish().write(NoCache, &mut self.writer);
         }
     }
 }
@@ -117,8 +126,8 @@ pub struct RecordedDiag {
     pub note: Option<String>,
 }
 
-impl Emitter for BufferEmitter {
-    fn emit(&mut self, diag: Diag<'_>) {
+impl<C: SourceCache> Emitter<C> for BufferEmitter {
+    fn emit(&mut self, diag: Diag<'_, C>) {
         let rd = RecordedDiag {
             level: diag.level,
             message: diag.message,

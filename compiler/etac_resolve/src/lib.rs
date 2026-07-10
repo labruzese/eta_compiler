@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use etac_errors::{DiagCtxt, etac_error, ErrorGuaranteed};
-use etac_span::{FileId, InterfaceId, SourceId, Span};
+use etac_span::{FileId, InterfaceId, SourceCache, SourceId, Span};
 
 /// A classified command-line input.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -49,7 +49,7 @@ impl Resolver {
     ///
     /// `None` means skip: the path was unusable (non-UTF8 name or unknown
     /// extension; reported) or names a file that is already queued (silent).
-    pub fn classify_cli(&mut self, dcx: &DiagCtxt, path: &Path) -> Option<File> {
+    pub fn classify_cli<C: SourceCache>(&mut self, dcx: &DiagCtxt<C>, path: &Path) -> Option<File> {
         let path = resolve_against(&self.source_path, path);
         let Some(path_str) = path.to_str() else {
             dcx.err_no_span(format!("non-UTF8 file name {}", path.to_string_lossy()))
