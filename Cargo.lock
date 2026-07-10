@@ -386,6 +386,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "etac_tests"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "etac_span",
+]
+
+[[package]]
 name = "etac_typecheck"
 version = "0.1.0"
 dependencies = [

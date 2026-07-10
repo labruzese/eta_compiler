@@ -1,31 +1,66 @@
-use std::{fmt, ops::Range};
-
+use std::{fmt, ops::{Bound, Range}, sync::{LazyLock, atomic::{AtomicU32, Ordering}}};
+use elsa::sync::FrozenMap;
+use dashmap::DashMap;
+use crossbeam_skiplist::SkipMap;
 use ariadne::{Source};
-
 use crate::{FileId, ReportableSpan, Span};
 
-pub trait SourceCache: Send + Sync {
-    fn contains(&self, display_name: &str) -> Option<FileId>;
+static SOURCES: LazyLock<SCache> = LazyLock::new(SCache::default);
 
-    fn store(&self, display_name: String, value: String) -> (FileId, &Source<String>);
+/// The global [`SOURCES`] cache, as the `&'static` borrow.
+pub fn sources() -> &'static SCache {
+    &SOURCES
+}
 
-    fn load_source(&self, id: FileId) -> &ariadne::Source<String>; 
+#[derive(Default)]
+pub struct SCache {
+    files: FrozenMap<FileId, Box<ariadne::Source<String>>>,
+    by_name: DashMap<&'static str, FileId>,
+    by_offset: SkipMap<u32, &'static str>,
+    alloc: AtomicU32,
+}
 
-    fn load_name(&self, id: FileId) -> &str;
+impl SCache {
+    fn contains(&self, display_name: &str) -> Option<FileId> {
+        self.by_name.get(display_name).map(|e| *e.value())
+    }
 
-    fn resolve_span(&self, span: Span) -> (Range<u32>, FileId);
+    fn store(&self, display_name: String, value: String) -> (FileId, &ariadne::Source<String>) {
+        let value_bytes = value.len() as u32;
+        let fileid = FileId(self.alloc.fetch_add(value_bytes, Ordering::SeqCst));
+        let name: &'static str = display_name.leak();
+        self.by_name.insert(name, fileid);
+        self.by_offset.insert(fileid.0, name);
+        let source = ariadne::Source::from(value);
+        let source_ref = self.files.insert(fileid, Box::new(source));
+        (fileid, source_ref)
+    }
 
-    /// The global base offset a [`FileId`] was allocated at, paired with its source.
-    /// Together with [`SourceCache::load_source`] this is everything needed to feed a
-    /// freshly resolved file into the lexer.
-    fn load(&self, id: FileId) -> (u32, &ariadne::Source<String>);
+    fn load_source(&self, id: FileId) -> &ariadne::Source<String> {
+        self.files.get(&id).expect("FileId constructed outside this cache passed")
+    }
+
+    fn load_name(&self, id: FileId) -> &str {
+        self.by_offset.get(&id.0).expect("FileId constructed outside this cache passed").value()
+    }
+
+    fn resolve_span(&self, span: Span) -> (Range<u32>, FileId) {
+        let entry = self
+            .by_offset
+            .upper_bound(Bound::Included(&span.lo))
+            .expect("span.lo below the first file start");
+        let base = entry.key();
+        ((span.lo - base)..(span.hi - base), FileId(*base))
+    }
+
+    fn load(&self, id: FileId) -> (u32, &ariadne::Source<String>) {
+        (id.0, self.load_source(id))
+    }
 
     fn reportable_span(&self, span: Span) -> ReportableSpan<'_, Self> {
         ReportableSpan::new(self, span)
     }
 
-    /// 1-indexed `(line, column)` of a global byte offset. Used by `-D` loggers to
-    /// print human-readable locations without going through a full `ariadne` report.
     fn line_column(&self, global_offset: u32) -> (u32, u32) {
         let (local_range, file_id) = self.resolve_span(Span::new(global_offset, global_offset));
         let source = self.load_source(file_id);
@@ -39,35 +74,7 @@ pub trait SourceCache: Send + Sync {
     }
 }
 
-impl<C: SourceCache + ?Sized> SourceCache for &C {
-    fn contains(&self, display_name: &str) -> Option<FileId> {
-        (**self).contains(display_name)
-    }
-
-    fn store(&self, display_name: String, value: String) -> (FileId, &Source<String>) {
-        (**self).store(display_name, value)
-    }
-
-    fn load_source(&self, id: FileId) -> &ariadne::Source<String> {
-        (**self).load_source(id)
-    }
-
-    fn load_name(&self, id: FileId) -> &str {
-        (**self).load_name(id)
-    }
-
-    fn resolve_span(&self, span: Span) -> (Range<u32>, FileId) {
-        (**self).resolve_span(span)
-    }
-
-    fn load(&self, id: FileId) -> (u32, &ariadne::Source<String>) {
-        (**self).load(id)
-    }
-}
-
-pub struct AriadneAdapter<'a, T>(pub &'a T);
-
-impl<'a, T: SourceCache> ariadne::Cache<FileId> for AriadneAdapter<'a, T> {
+impl<'a> ariadne::Cache<FileId> for &'a SCache {
     type Storage = String;
 
     fn fetch(&mut self, id: &FileId) -> Result<&Source<Self::Storage>, impl fmt::Debug> {
@@ -78,21 +85,3 @@ impl<'a, T: SourceCache> ariadne::Cache<FileId> for AriadneAdapter<'a, T> {
         Some(self.0.load_name(*id).to_owned())
     }
 }
-
-pub mod global_context;
-pub use global_context::*;
-
-// pub fn line_column(source: &ariadne::Source, at: usize) -> (u32, u32) {
-//     let (_line, linen, coln) = source
-//         .get_byte_line(at)
-//         .map(|(a, b, c)| {
-//             (
-//                 a,
-//                 u32::try_from(b).expect("requested line/col is out of bounds"),
-//                 u32::try_from(c).expect("requested line/col is out of bounds"),
-//             )
-//         })
-//         .expect("requested line/col is out of bounds");
-//
-//     (linen + 1, coln + 1)
-// }

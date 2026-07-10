@@ -166,16 +166,16 @@ fn resolve_against(root: &Path, path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use etac_errors::{BufferEmitter, Level, RecordedDiag};
-    use etac_span::GlobalCache;
+    use etac_span::SCache;
 
     /// Run `f` with a context whose diagnostics are captured instead of
     /// printed, returning whatever it produced plus the recorded diagnostics.
     /// Each call gets a fresh, isolated [`GlobalCache`] rather than the
     /// process-wide singleton, so tests can't see each other's files.
-    fn with_dcx<T>(f: impl FnOnce(&DiagCtxt<GlobalCache>) -> T) -> (T, Vec<RecordedDiag>) {
+    fn with_dcx<T>(f: impl FnOnce(&DiagCtxt<SCache>) -> T) -> (T, Vec<RecordedDiag>) {
         let buf = BufferEmitter::new();
         let out = {
-            let dcx = DiagCtxt::with_emitter(GlobalCache::default(), Box::new(buf.clone()));
+            let dcx = DiagCtxt::with_emitter(SCache::default(), Box::new(buf.clone()));
             f(&dcx)
         };
         (out, buf.take())

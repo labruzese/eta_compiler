@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{FileId, SourceCache, Span};
+use crate::{FileId, Span};
 
 /// Span that keeps track of its source cache.
 ///
