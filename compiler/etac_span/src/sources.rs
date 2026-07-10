@@ -21,11 +21,15 @@ pub struct SCache {
 }
 
 impl SCache {
-    fn contains(&self, display_name: &str) -> Option<FileId> {
+    pub fn file_offset(&self, fileid: FileId) -> u32 {
+        fileid.0
+    }
+
+    pub fn contains(&self, display_name: &str) -> Option<FileId> {
         self.by_name.get(display_name).map(|e| *e.value())
     }
 
-    fn store(&self, display_name: String, value: String) -> (FileId, &ariadne::Source<String>) {
+    pub fn store(&self, display_name: String, value: String) -> (FileId, &ariadne::Source<String>) {
         let value_bytes = value.len() as u32;
         let fileid = FileId(self.alloc.fetch_add(value_bytes, Ordering::SeqCst));
         let name: &'static str = display_name.leak();
@@ -36,15 +40,15 @@ impl SCache {
         (fileid, source_ref)
     }
 
-    fn load_source(&self, id: FileId) -> &ariadne::Source<String> {
+    pub fn load_source(&self, id: FileId) -> &ariadne::Source<String> {
         self.files.get(&id).expect("FileId constructed outside this cache passed")
     }
 
-    fn load_name(&self, id: FileId) -> &str {
+    pub fn load_name(&self, id: FileId) -> &str {
         self.by_offset.get(&id.0).expect("FileId constructed outside this cache passed").value()
     }
 
-    fn resolve_span(&self, span: Span) -> (Range<u32>, FileId) {
+    pub fn resolve_span(&self, span: Span) -> (Range<u32>, FileId) {
         let entry = self
             .by_offset
             .upper_bound(Bound::Included(&span.lo))
@@ -53,15 +57,11 @@ impl SCache {
         ((span.lo - base)..(span.hi - base), FileId(*base))
     }
 
-    fn load(&self, id: FileId) -> (u32, &ariadne::Source<String>) {
-        (id.0, self.load_source(id))
-    }
-
-    fn reportable_span(&self, span: Span) -> ReportableSpan<'_, Self> {
+    pub fn reportable_span(&self, span: Span) -> ReportableSpan<'_> {
         ReportableSpan::new(self, span)
     }
 
-    fn line_column(&self, global_offset: u32) -> (u32, u32) {
+    pub fn line_column(&self, global_offset: u32) -> (u32, u32) {
         let (local_range, file_id) = self.resolve_span(Span::new(global_offset, global_offset));
         let source = self.load_source(file_id);
         let (_line, linen, coln) = source

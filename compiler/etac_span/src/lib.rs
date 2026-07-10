@@ -7,7 +7,7 @@ pub use ariadne_compat::*;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FileId(pub u32);
+pub struct FileId(u32);
 pub type SourceId = FileId;
 pub type InterfaceId = FileId;
 

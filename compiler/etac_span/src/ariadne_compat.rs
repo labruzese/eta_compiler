@@ -1,19 +1,19 @@
 use std::ops::Range;
 
-use crate::{FileId, Span};
+use crate::{FileId, SCache, Span};
 
 /// Span that keeps track of its source cache.
 ///
 /// This is really only for aridane error reporting since we're incabable of 
 /// passing the global space context to it from outside the library.
-pub struct ReportableSpan<'a, Cache: SourceCache + ?Sized> {
-    cache: &'a Cache,
+pub struct ReportableSpan<'a> {
+    cache: &'a SCache,
     pub span: Span,
     own: std::cell::OnceCell<(Range<u32>, FileId)>,
 }
 
-impl<'a, Cache: SourceCache + ?Sized> ReportableSpan<'a, Cache> {
-    pub fn new(cache: &'a Cache, span: Span) -> Self {
+impl<'a> ReportableSpan<'a> {
+    pub fn new(cache: &'a SCache, span: Span) -> Self {
         ReportableSpan {
             cache,
             span,
@@ -22,7 +22,7 @@ impl<'a, Cache: SourceCache + ?Sized> ReportableSpan<'a, Cache> {
     }
 }
 
-impl<'a, Cache: SourceCache> ariadne::Span for ReportableSpan<'a, Cache> {
+impl<'a> ariadne::Span for ReportableSpan<'a> {
     type SourceId = FileId;
 
     fn source(&self) -> &Self::SourceId {
