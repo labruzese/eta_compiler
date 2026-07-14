@@ -3,6 +3,8 @@
 //! Passes input between each phase and attches loggers.
 //! Currently also does file resolution / lookup.
 
+use std::path::Path;
+
 use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed, etac_error};
 use etac_ast::SpanTable;
 use etac_parse::{IParser, Parsed};
@@ -24,18 +26,16 @@ enum LoadBlame {
     Use(Span),
 }
 
-fn load_file(dcx: &DiagCtxt, name: &str, blame: LoadBlame) -> Result<(FileId, &'static str)> {
-    match etac_span::sources().store(name) {
-        Ok(loaded) => Ok(loaded),
-        Err(ioe) => {
-            let guar = match blame {
-                LoadBlame::CommandLine => Diag::io(dcx, &ioe).emit(),
-                LoadBlame::Use(span) => etac_error! {
-                    dcx, span, "cannot load interface file `{}`: {}", file.as_str(), ioe;
-                    primary: "required by this `use`";
-                }.emit(),
+fn load_file(resolver: &mut Resolver, dcx: &DiagCtxt, path: &Path, blame: LoadBlame) -> Result<Option<(FileId, &'static str)>> {
+    match resolver.classify_cli(dcx, path) {
+        Ok(Some(File::Interface(id))) | Ok(Some(File::Program(id))) => Ok(Some((id, dcx.sources().load_source(id).text()))),
+        Ok(None) =>  Ok(None), // file already loaded
+        Err(diag) => {
+            let g = match blame {
+                LoadBlame::CommandLine => diag.emit(),
+                LoadBlame::Use(span) => diag.with_secondary_label(span, "required by this `use`").emit(),
             };
-            Err(guar)
+            Err(g)
         }
     }
 }
@@ -48,12 +48,14 @@ fn parse_one<'dcx, P>(
     file: FileId,
     blame: LoadBlame,
     parser: P,
-) -> Result<P::Out>
+) -> Result<Option<P::Out>>
 where
     P: IParser<'dcx, 'static>,
     P::Out: std::fmt::Display,
 {
-    let (base, source) = load_file(dcx, file, blame)?;
+    let Some((base, source)) = load_file(dcx, file, blame)? else {
+        return Ok(None)
+    };
 
     let lexer = etac_lexer::Lexer::new(base, source, dcx);
 

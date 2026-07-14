@@ -1,0 +1,17 @@
+[package]
+name = "etac_cache"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+ariadne.workspace       = true
+unicode-width.workspace = true
+elsa.workspace		= true
+dashmap.workspace	= true
+crossbeam-skiplist.workspace = true
+etac_span.workspace = true
+etac_errors.workspace = true
+
+[lints]
+workspace = true

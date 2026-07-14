@@ -9,14 +9,14 @@ use std::{
     num::ParseIntError,
 };
 
-use etac_errors::{DiagCtxtGeneric, DiagGeneric, etac_error};
+use etac_errors::{DiagCtxt, Diag, etac_error};
 use etac_span::Span;
 use logos::Logos;
 
 mod internal_error;
 use internal_error::{InternalLexerError, lexer_error};
 
-pub trait ILexer<'sc: 'src + 'dcx, 'src, 'dcx>: Iterator<Item = Result<(u32, Token<'src>, u32), DiagGeneric<'sc, 'dcx>>> {}
+pub trait ILexer<'sc: 'src + 'dcx, 'src, 'dcx>: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'sc, 'dcx>>> {}
 
 fn global_span<'s>(lex: &logos::Lexer<'s, Token<'s>>) -> Span {
     Span::new(lex.extras + lex.span().start as u32, lex.extras + lex.span().end as u32)
@@ -33,13 +33,13 @@ fn lexer_error<'s>(lex: &mut logos::Lexer<'s, Token<'s>>) -> InternalLexerError 
 type LogosLexer<'src> = logos::Lexer<'src, Token<'src>>;
 
 pub struct Lexer<'sc: 'src + 'dcx, 'src, 'dcx> {
-    diagc: &'dcx DiagCtxtGeneric<'sc>,
+    diagc: &'dcx DiagCtxt<'sc>,
     inner: logos::SpannedIter<'src, Token<'src>>,
 }
 
 impl<'sc: 'src + 'dcx, 'src, 'dcx> Lexer<'sc, 'src, 'dcx> {
     #[must_use]
-    pub fn new(base: u32, source: &'src str, diag_context: &'dcx DiagCtxtGeneric<'sc>) -> Self {
+    pub fn new(base: u32, source: &'src str, diag_context: &'dcx DiagCtxt<'sc>) -> Self {
         Self {
             diagc: diag_context,
             inner: <Token as Logos>::lexer_with_extras(source, base).spanned(),
@@ -50,7 +50,7 @@ impl<'sc: 'src + 'dcx, 'src, 'dcx> Lexer<'sc, 'src, 'dcx> {
 impl<'sc: 'src + 'dcx, 'src, 'dcx> ILexer<'sc, 'src, 'dcx> for Lexer<'sc, 'src, 'dcx> {}
 // transformed for lalrpop
 impl<'sc: 'src + 'dcx, 'src, 'dcx> Iterator for Lexer<'sc, 'src, 'dcx> {
-    type Item = Result<(u32, Token<'src>, u32), DiagGeneric<'sc, 'dcx>>;
+    type Item = Result<(u32, Token<'src>, u32), Diag<'sc, 'dcx>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (next, local_span) = self.inner.next()?;
@@ -59,7 +59,7 @@ impl<'sc: 'src + 'dcx, 'src, 'dcx> Iterator for Lexer<'sc, 'src, 'dcx> {
         match next {
             Ok(tok) => Some(Ok((span.lo, tok, span.hi))),
             Err(diag) => {
-                let mut d: DiagGeneric<'sc, 'dcx> = etac_error!(self.diagc, diag.span, "{}", diag.message);
+                let mut d: Diag<'sc, 'dcx> = etac_error!(self.diagc, diag.span, "{}", diag.message);
                 if let Some(l) = diag.plabel {
                     d = d.with_primary_label(l);
                 }

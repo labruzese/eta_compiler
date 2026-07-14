@@ -3,7 +3,13 @@ use elsa::sync::FrozenMap;
 use dashmap::DashMap;
 use crossbeam_skiplist::SkipMap;
 use ariadne::{Source};
-use crate::{FileId, ReportableSpan, Span};
+use etac_span::{ReportableSpan, Span};
+use etac_error::DiagCtxt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileId(u32);
+pub type SourceId = FileId;
+pub type InterfaceId = FileId;
 
 static SOURCES: LazyLock<SCache> = LazyLock::new(SCache::default);
 
@@ -12,8 +18,15 @@ pub fn sources() -> &'static SCache {
     &SOURCES
 }
 
+pub enum SourceState {
+    String(Box<ariadne::Source<String>>),
+    ProgramAst(Box<etac_ast::Program>),
+    InterfaceAst(Box<etac_ast::Interface>),
+}
+
 #[derive(Default)]
 pub struct SCache {
+    dcx: DiagCtxt,
     files: FrozenMap<FileId, Box<ariadne::Source<String>>>,
     by_name: DashMap<&'static str, FileId>,
     by_offset: SkipMap<u32, &'static str>,

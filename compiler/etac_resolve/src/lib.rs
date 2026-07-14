@@ -13,7 +13,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use etac_errors::{Diag, DiagCtxt, etac_error, ErrorGuaranteed};
+use etac_errors::{DiagCtxt, Diag, etac_error};
 use etac_span::{FileId, InterfaceId, SourceId, Span};
 
 /// A classified command-line input.
@@ -50,33 +50,29 @@ impl Resolver {
     /// `None` means skip: the path was unusable (non-UTF8 name, unknown
     /// extension, or an I/O error — all reported) or names a file that is
     /// already queued (silent).
-    pub fn classify_cli(&mut self, dcx: &DiagCtxt, path: &Path) -> Option<File> {
+    pub fn classify_cli<'sc, 'dcx>(&mut self, dcx: &'dcx DiagCtxt<'sc>, path: &Path) -> Result<Option<File>, Diag<'sc, 'dcx>> {
         let path = resolve_against(&self.source_path, path);
         let Some(path_str) = path.to_str() else {
-            dcx.err_no_span(format!("non-UTF8 file name {}", path.to_string_lossy()))
-                .emit();
-            return None;
+            return Err(dcx.err_no_span(format!("non-UTF8 file name {}", path.to_string_lossy())));
         };
 
         let is_interface = match path.extension().and_then(|x| x.to_str()) {
             Some("eta") => false,
             Some("eti") => true,
             ext => {
-                dcx.err_no_span(format!(
+                return Err(dcx.err_no_span(format!(
                     "unknown file type `{}` for {path_str}",
                     ext.unwrap_or("")
-                ))
-                .emit();
-                return None;
+                )));
             }
         };
 
         let id = self.load(dcx, path_str)?;
-        self.seen.insert(id).then_some(if is_interface {
-            File::Interface(id)
-        } else {
-            File::Program(id)
-        })
+        match self.seen.insert(id) {
+            true if is_interface => Ok(Some(File::Interface(id))),
+            true => Ok(Some(File::Program(id))),
+            false => Ok(None),
+        }
     }
 
     /// Resolve one `use name` appearing in `from`. The search order is the directory
@@ -88,13 +84,13 @@ impl Resolver {
     /// `Err` means skip: no candidate exists on the search path (reported at
     /// `at`, naming every location searched) 
     /// `None` means the interface is already queued. 
-    pub fn resolve_use(
+    pub fn resolve_use<'sc, 'dcx>(
         &mut self,
-        dcx: &DiagCtxt,
+        dcx: &'dcx DiagCtxt<'sc>,
         from: SourceId,
         name: &str,
         at: Span,
-    ) -> Result<Option<InterfaceId>, ErrorGuaranteed> {
+    ) -> Result<Option<InterfaceId>, Diag<'sc, 'dcx>> {
         let file_name = format!("{name}.eti");
         let from_path = dcx.sources().load_name(from).to_string();
         let from_dir = Path::new(&from_path)
@@ -112,11 +108,7 @@ impl Resolver {
                 let Some(candidate_str) = candidate.to_str() else {
                     continue;
                 };
-                let Some(iid) = self.load(dcx, candidate_str) else {
-                    // load() already emitted a diagnostic for a real I/O error; a
-                    // non-UTF8 path can't happen here since `candidate_str` succeeded.
-                    return Err(unsafe { ErrorGuaranteed::claim_already_emitted() });
-                };
+                let iid = self.load(dcx, candidate_str)?;
                 return Ok(self.seen.insert(iid).then_some(iid));
             }
         }
@@ -130,22 +122,20 @@ impl Resolver {
             dcx, at, "cannot find interface `{}`", name;
             primary: "no `{}` on the search path", file_name;
             note: "searched: {}", searched;
-        }
-        .emit())
+        })
     }
 
     /// Read `path_str` from disk and store it in `dcx`'s cache, reusing the existing
     /// [`FileId`] if this path has already been loaded. `None` means an I/O error was
     /// hit and already reported.
-    fn load(&self, dcx: &DiagCtxt, path_str: &str) -> Option<FileId> {
+    fn load<'sc, 'dcx>(&self, dcx: &'dcx DiagCtxt<'sc>, path_str: &str) -> Result<FileId, Diag<'sc, 'dcx>> {
         if let Some(id) = dcx.sources().contains(path_str) {
-            return Some(id);
+            return Ok(id);
         }
         match std::fs::read_to_string(path_str) {
-            Ok(contents) => Some(dcx.sources().store(path_str.to_string(), contents).0),
+            Ok(contents) => Ok(dcx.sources().store(path_str.to_string(), contents).0),
             Err(ioe) => {
-                Diag::io(dcx, &ioe).emit();
-                None
+                Err(Diag::io(dcx, &ioe))
             }
         }
     }
@@ -165,7 +155,7 @@ fn resolve_against(root: &Path, path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use etac_errors::{BufferEmitter, DiagCtxtGeneric, Level, RecordedDiag};
+    use etac_errors::{BufferEmitter, DiagCtxt, Level, RecordedDiag};
     use etac_span::SCache;
 
     /// Run `f` with a context whose diagnostics are captured instead of
@@ -175,7 +165,7 @@ mod tests {
     fn with_dcx<T>(f: impl FnOnce(&DiagCtxt) -> T) -> (T, Vec<RecordedDiag>) {
         let buf = BufferEmitter::new();
         let out = {
-            let dcx = DiagCtxtGeneric::with_emitter(SCache::default(), Box::new(buf.clone()));
+            let dcx = DiagCtxt::with_emitter(SCache::default(), Box::new(buf.clone()));
             f(&dcx)
         };
         (out, buf.take())

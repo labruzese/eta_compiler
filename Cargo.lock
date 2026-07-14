@@ -305,6 +305,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "etac_cache"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "crossbeam-skiplist",
+ "dashmap",
+ "elsa",
+ "etac_errors",
+ "etac_span",
+ "unicode-width",
+]
+
+[[package]]
 name = "etac_driver"
 version = "0.1.0"
 dependencies = [
@@ -365,6 +378,7 @@ name = "etac_session"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "etac_ast",
  "etac_errors",
  "etac_lexer",
  "etac_parse",

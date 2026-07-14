@@ -8,11 +8,11 @@ use std::{cell::RefCell, convert::Infallible, io::Write, rc::Rc};
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
 use etac_span::Span;
 
-use crate::{DiagGeneric, Level};
+use crate::{Diag, Level};
 
 /// Can take ownership of a diagnostic to emit it
 pub trait Emitter {
-    fn emit(&mut self, diag: DiagGeneric<'_, '_>);
+    fn emit(&mut self, diag: Diag<'_, '_>);
 }
 
 /// Renders diagnostics to stderr with source snippets via `ariadne`.
@@ -28,7 +28,7 @@ impl<W: Write> IoEmitter<W> {
 }
 
 impl<W: Write> Emitter for IoEmitter<W> {
-    fn emit(&mut self, diag: DiagGeneric<'_, '_>) {
+    fn emit(&mut self, diag: Diag<'_, '_>) {
         let kind = match diag.level {
             Level::Error => ReportKind::Error,
             Level::Warning => ReportKind::Warning,
@@ -118,7 +118,7 @@ pub struct RecordedDiag {
 }
 
 impl Emitter for BufferEmitter {
-    fn emit(&mut self, diag: DiagGeneric<'_, '_>) {
+    fn emit(&mut self, diag: Diag<'_, '_>) {
         let rd = RecordedDiag {
             level: diag.level,
             message: diag.message,

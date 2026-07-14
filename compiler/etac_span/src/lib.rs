@@ -1,15 +1,8 @@
-mod sources;
-pub use sources::*;
-
 mod ariadne_compat;
 pub use ariadne_compat::*;
 
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FileId(u32);
-pub type SourceId = FileId;
-pub type InterfaceId = FileId;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {

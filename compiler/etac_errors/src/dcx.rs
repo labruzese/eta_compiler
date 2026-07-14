@@ -13,7 +13,7 @@
 use std::cell::RefCell;
 use std::fmt;
 
-use etac_span::{SCache, Span};
+use etac_span::{Span};
 
 use crate::Level;
 use crate::emitter::{Emitter, IoEmitter};
@@ -52,27 +52,24 @@ pub(crate) struct Inner {
     warn_count: usize,
 }
 
-pub type DiagCtxt = DiagCtxtGeneric<'static>;
 
 /// The single diagnostic sink for a compilation. Renders spans against the
 /// process-global [`SOURCES`](etac_span::SOURCES) cache which carries the static lifetime.
-pub struct DiagCtxtGeneric<'sc> {
-    pub(crate) sources: &'sc SCache,
+pub struct DiagCtxt {
     pub(crate) inner: RefCell<Inner>,
 }
 
-impl<'sc> DiagCtxtGeneric<'sc> {
+impl DiagCtxt {
     /// A context that renders to stderr.
     #[must_use]
-    pub fn new(cache: &'sc SCache) -> Self {
-        Self::with_emitter(cache, Box::new(IoEmitter::new(std::io::stderr())))
+    pub fn new() -> Self {
+        Self::with_emitter(Box::new(IoEmitter::new(std::io::stderr())))
     }
 
     /// A context with a custom sink (example: [`BufferEmitter`](crate::BufferEmitter)).
     #[must_use]
-    pub fn with_emitter(cache: &'sc SCache, emitter: Box<dyn Emitter>) -> Self {
+    pub fn with_emitter(emitter: Box<dyn Emitter>) -> Self {
         Self {
-            sources: cache,
             inner: RefCell::new(Inner {
                 emitter,
                 err_count: 0,
@@ -81,25 +78,19 @@ impl<'sc> DiagCtxtGeneric<'sc> {
         }
     }
 
-    /// The source cache this context renders against.
-    #[inline]
-    pub fn sources(&self) -> &'sc SCache {
-        self.sources
-    }
-
     /// Start building an error at `span`. Must be `.emit()`ed or `.cancel()`ed.
-    pub fn err(&self, span: Span, msg: impl Into<String>) -> DiagGeneric<'sc, '_> {
-        DiagGeneric::new(self, Level::Error, span, msg)
+    pub fn err(&self, span: Span, msg: impl Into<String>) -> Diag<'_> {
+        Diag::new(self, Level::Error, span, msg)
     }
 
     /// Start building a location-less error (I/O failures, bad CLI input, ...).
-    pub fn err_no_span(&self, msg: impl Into<String>) -> DiagGeneric<'sc, '_> {
-        DiagGeneric::new_no_span(self, Level::Error, msg)
+    pub fn err_no_span(&self, msg: impl Into<String>) -> Diag<'_> {
+        Diag::new_no_span(self, Level::Error, msg)
     }
 
     /// Start building a warning at `span`.
-    pub fn warn(&self, span: Span, msg: impl Into<String>) -> DiagGeneric<'sc, '_> {
-        DiagGeneric::new(self, Level::Warning, span, msg)
+    pub fn warn(&self, span: Span, msg: impl Into<String>) -> Diag<'_> {
+        Diag::new(self, Level::Warning, span, msg)
     }
 
     pub fn err_count(&self) -> usize {
@@ -117,8 +108,6 @@ impl<'sc> DiagCtxtGeneric<'sc> {
     }
 }
 
-pub type Diag<'dcx> = DiagGeneric<'static, 'dcx>;
-
 /// A diagnostic under construction, knowing its [`DiagCtxt`].
 ///
 /// [`Drop`] bomb will panic in debug mode if dropped without [`emit`](Diag::emit) or
@@ -126,8 +115,8 @@ pub type Diag<'dcx> = DiagGeneric<'static, 'dcx>;
 ///
 /// A Diag borrows the diagnostic context [`'dcx`]; the [`SCache`] borrow is `'static`.
 #[must_use = "a Diag does nothing until you call `.emit()` (or `.cancel()` it)"]
-pub struct DiagGeneric<'sc: 'dcx, 'dcx> {
-    pub(crate) dcx: &'dcx DiagCtxtGeneric<'sc>,
+pub struct Diag<'dcx> {
+    pub(crate) dcx: &'dcx DiagCtxt,
     pub level: Level,
     pub message: String,
     pub loc: Option<Span>,
@@ -139,9 +128,9 @@ pub struct DiagGeneric<'sc: 'dcx, 'dcx> {
     bomb: DropBomb,
 }
 
-impl<'sc: 'dcx, 'dcx> DiagGeneric<'sc, 'dcx> {
+impl<'dcx> Diag<'dcx> {
     /// Create a new diagnostic at a location with a message.
-    fn new(dcx: &'dcx DiagCtxtGeneric<'sc>, level: Level, span: Span, message: impl Into<String>) -> Self {
+    fn new(dcx: &'dcx DiagCtxt, level: Level, span: Span, message: impl Into<String>) -> Self {
         Self {
             dcx,
             level,
@@ -156,7 +145,7 @@ impl<'sc: 'dcx, 'dcx> DiagGeneric<'sc, 'dcx> {
     }
 
     /// Create a new diagnostic that doesn't have a location
-    fn new_no_span(dcx: &'dcx DiagCtxtGeneric<'sc>, level: Level, message: impl Into<String>) -> Self {
+    fn new_no_span(dcx: &'dcx DiagCtxt, level: Level, message: impl Into<String>) -> Self {
         Self {
             dcx,
             level,
@@ -171,7 +160,7 @@ impl<'sc: 'dcx, 'dcx> DiagGeneric<'sc, 'dcx> {
     }
 
     /// Create an error given some IO error.
-    pub fn io(dcx: &'dcx DiagCtxtGeneric<'sc>, io_err: &std::io::Error) -> Self {
+    pub fn io(dcx: &'dcx DiagCtxt, io_err: &std::io::Error) -> Self {
         Self::new_no_span(dcx, Level::Error, io_err.to_string())
     }
 
@@ -232,7 +221,7 @@ impl<'sc: 'dcx, 'dcx> DiagGeneric<'sc, 'dcx> {
 
 impl Default for DiagCtxt {
     fn default() -> Self {
-        Self::new(etac_span::sources())
+        Self::new()
     }
 }
 
