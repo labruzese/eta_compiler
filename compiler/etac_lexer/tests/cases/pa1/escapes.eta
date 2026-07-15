@@ -1,8 +1,0 @@
-"Hello, Worl\x{64}!" // should display everything in ASCII
-'\x{64}'
-"Hello, Worl\x{b5}!" // should be escaped as \x{b5}
-'\x{b5}'
-"\t"
-'\t'
-"éç"
-"\q" // invalid escape sequence

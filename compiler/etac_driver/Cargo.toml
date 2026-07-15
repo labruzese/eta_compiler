@@ -5,17 +5,12 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-etac_ast.workspace     = true
+etac_cache.workspace   = true
 etac_errors.workspace  = true
 etac_lexer.workspace   = true
 etac_parse.workspace   = true
-etac_session.workspace = true
-etac_span.workspace    = true
 etac_resolve.workspace = true
-
-[dev-dependencies]
-tempfile.workspace     = true
-
+etac_session.workspace = true
 
 [lints]
 workspace = true

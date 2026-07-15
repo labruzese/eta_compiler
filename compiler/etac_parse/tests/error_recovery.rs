@@ -1,11 +1,9 @@
 #![allow(clippy::pedantic)]
 
+use etac_cache::EtaCache;
 use etac_errors::{BufferEmitter, DiagCtxt, Level, RecordedDiag};
 use etac_lexer::Lexer;
 use etac_parse::{IParser, Parsed};
-use etac_span::FileId;
-use std::io::Write;
-use tempfile::NamedTempFile;
 
 /// Test harness around a single parse: the [`Parsed`] outcome plus the full list of
 /// diagnostics the parse emitted (captured by a [`BufferEmitter`]) and the cache
@@ -15,7 +13,7 @@ use tempfile::NamedTempFile;
 pub struct Harness<Out> {
     parsed: Parsed<Out>,
     diags: Vec<RecordedDiag>,
-    _file: NamedTempFile,
+    cache: EtaCache,
 }
 
 impl<Out: std::fmt::Display> Harness<Out> {
@@ -28,7 +26,7 @@ impl<Out: std::fmt::Display> Harness<Out> {
     pub fn first_error_pos(&self) -> Option<(u32, u32)> {
         let d = self.error_diags().into_iter().find(|d| d.loc.is_some())?;
         let loc = d.loc.as_ref().unwrap();
-        etac_span::sources().lc_index(loc.lo).ok()
+        Some(self.cache.line_column(loc.lo))
     }
     pub fn messages(&self) -> Vec<&str> {
         self.error_diags().iter().map(|d| d.message.as_str()).collect()
@@ -41,38 +39,24 @@ impl<Out: std::fmt::Display> Harness<Out> {
     }
 }
 
-fn write_temp_source(src: &str, ext: &str) -> NamedTempFile {
-    let mut tmp = tempfile::Builder::new()
-        .suffix(ext)
-        .tempfile()
-        .expect("failed to create temp source file");
-    tmp.write_all(src.as_bytes()).expect("failed to write temp source");
-    tmp.flush().expect("failed to flush temp source");
-    tmp
-}
-
 /// Lex and parse `src` with the given parser type (`ProgramParser` or
 /// `InterfaceParser`), mirroring the driver's per-file flow. A macro rather than a
 /// generic function because the parser is chosen by a constructor that borrows the
 /// locally-created diagnostic context.
 macro_rules! run_parse {
     ($src:expr, $ext:expr, $parser:ident) => {{
-        let tmp = write_temp_source($src, $ext);
-        let file_id = FileId::new(tmp.path().to_str().expect("non-utf8 temp path"));
+        let cache = EtaCache::new();
+        let (file, _) = cache.store_source(format!("test{}", $ext), $src.to_string());
+        let base = cache.base_offset(file);
+        let source = cache.source_text(file).to_string();
 
         // Buffer the diagnostics instead of printing them. The buffer is shared
-        // with the context (it is an `Rc` inside). Source text lives in the
-        // process-global cache; temp files have unique paths, so parallel tests
-        // never collide in it.
+        // with the context (it is an `Rc` inside).
         let buf = BufferEmitter::new();
         let parsed = {
-            let dcx = DiagCtxt::with_emitter(etac_span::sources(), Box::new(buf.clone()));
-            let mut spans = etac_ast::SpanTable::new();
-            let mut parser = etac_parse::$parser::new(&dcx, &mut spans);
-            let (base, source) = etac_span::sources()
-                .load(file_id)
-                .expect("temp source should load");
-            let mut lexer = Lexer::new(base, source, &dcx);
+            let dcx = DiagCtxt::with_emitter(&cache, Box::new(buf.clone()));
+            let mut parser = etac_parse::$parser::new(&dcx);
+            let mut lexer = Lexer::new(base, &source, &dcx);
             let parsed = parser.parse(&mut lexer);
             // The parser retains recovered/fatal diagnostics; emit them the way the
             // driver does so they land in the buffer (and no drop-bomb fires).
@@ -83,7 +67,7 @@ macro_rules! run_parse {
         };
         let diags = buf.take();
 
-        Harness { parsed, diags, _file: tmp }
+        Harness { parsed, diags, cache }
     }};
 }
 

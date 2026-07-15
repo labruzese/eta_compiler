@@ -6,13 +6,13 @@
 use std::{cell::RefCell, convert::Infallible, io::Write, rc::Rc};
 
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
-use etac_span::Span;
+use etac_cache::Span;
 
 use crate::{Diag, Level};
 
 /// Can take ownership of a diagnostic to emit it
 pub trait Emitter {
-    fn emit(&mut self, diag: Diag<'_, '_>);
+    fn emit(&mut self, diag: Diag<'_>);
 }
 
 /// Renders diagnostics to stderr with source snippets via `ariadne`.
@@ -28,7 +28,7 @@ impl<W: Write> IoEmitter<W> {
 }
 
 impl<W: Write> Emitter for IoEmitter<W> {
-    fn emit(&mut self, diag: Diag<'_, '_>) {
+    fn emit(&mut self, diag: Diag<'_>) {
         let kind = match diag.level {
             Level::Error => ReportKind::Error,
             Level::Warning => ReportKind::Warning,
@@ -43,7 +43,7 @@ impl<W: Write> Emitter for IoEmitter<W> {
             // whenever multibyte UTF-8 characters appear before the error
             // in the same file.
             let byte_config = Config::default().with_index_type(IndexType::Byte);
-            let mut b = Report::build(kind, diag.dcx.sources.reportable_span(loc))
+            let mut b = Report::build(kind, diag.dcx.cache().reportable_span(loc))
                 .with_config(byte_config)
                 .with_message(&diag.message);
             if let Some(c) = &diag.code {
@@ -53,9 +53,9 @@ impl<W: Write> Emitter for IoEmitter<W> {
                 b = b.with_note(n);
             }
             for (span, msg, color) in &diag.labels {
-                b = b.with_label(Label::new(diag.dcx.sources.reportable_span(*span)).with_message(msg).with_color(*color));
+                b = b.with_label(Label::new(diag.dcx.cache().reportable_span(*span)).with_message(msg).with_color(*color));
             }
-            let _ = b.finish().eprint(diag.dcx.sources);
+            let _ = b.finish().write(diag.dcx.cache(), &mut self.writer);
         } else {
             static NO_SPAN: NoSpan = NoSpan;
             let mut b = Report::build(kind, NO_SPAN).with_message(&diag.message);
@@ -68,7 +68,7 @@ impl<W: Write> Emitter for IoEmitter<W> {
             for (_span, msg, color) in &diag.labels {
                 b = b.with_label(Label::new(NO_SPAN).with_message(msg).with_color(*color));
             }
-            let _ = b.finish().eprint(NoCache);
+            let _ = b.finish().write(NoCache, &mut self.writer);
         }
     }
 }
@@ -118,7 +118,7 @@ pub struct RecordedDiag {
 }
 
 impl Emitter for BufferEmitter {
-    fn emit(&mut self, diag: Diag<'_, '_>) {
+    fn emit(&mut self, diag: Diag<'_>) {
         let rd = RecordedDiag {
             level: diag.level,
             message: diag.message,

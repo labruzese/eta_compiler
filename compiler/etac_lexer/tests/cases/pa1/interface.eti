@@ -1,5 +1,0 @@
-// Math operations
-add(a: int, b: int): int
-matrix(m: int[][]): int[][]
-noreturn(a: int)
-noargs(): int

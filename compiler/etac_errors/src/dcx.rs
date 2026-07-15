@@ -1,7 +1,8 @@
 //! The diagnostic context
 //!
-//! * [`DiagCtxt`] owns the [`Emitter`] and the running error/warning counts. Nothing
-//!   else emits. Borrow `&DiagCtxt` and report directly.
+//! * [`DiagCtxt`] borrows the compilation's [`EtaCache`] (to render spans) and
+//!   owns the [`Emitter`] and the running error/warning counts. Nothing else
+//!   emits. Borrow `&DiagCtxt` and report directly.
 //!
 //! * [`ErrorGuaranteed`] is a *proof* that an error reached the user. A function returning
 //!   `Result<T, ErrorGuaranteed>` is making a promise: "if this is `Err`, a
@@ -13,7 +14,7 @@
 use std::cell::RefCell;
 use std::fmt;
 
-use etac_span::{Span};
+use etac_cache::{EtaCache, Span};
 
 use crate::Level;
 use crate::emitter::{Emitter, IoEmitter};
@@ -52,24 +53,25 @@ pub(crate) struct Inner {
     warn_count: usize,
 }
 
-
-/// The single diagnostic sink for a compilation. Renders spans against the
-/// process-global [`SOURCES`](etac_span::SOURCES) cache which carries the static lifetime.
-pub struct DiagCtxt {
+/// The single diagnostic sink for a compilation. Borrows the [`EtaCache`] the
+/// compilation's spans resolve against.
+pub struct DiagCtxt<'ec> {
+    pub(crate) cache: &'ec EtaCache,
     pub(crate) inner: RefCell<Inner>,
 }
 
-impl DiagCtxt {
+impl<'ec> DiagCtxt<'ec> {
     /// A context that renders to stderr.
     #[must_use]
-    pub fn new() -> Self {
-        Self::with_emitter(Box::new(IoEmitter::new(std::io::stderr())))
+    pub fn new(cache: &'ec EtaCache) -> Self {
+        Self::with_emitter(cache, Box::new(IoEmitter::new(std::io::stderr())))
     }
 
     /// A context with a custom sink (example: [`BufferEmitter`](crate::BufferEmitter)).
     #[must_use]
-    pub fn with_emitter(emitter: Box<dyn Emitter>) -> Self {
+    pub fn with_emitter(cache: &'ec EtaCache, emitter: Box<dyn Emitter>) -> Self {
         Self {
+            cache,
             inner: RefCell::new(Inner {
                 emitter,
                 err_count: 0,
@@ -78,18 +80,24 @@ impl DiagCtxt {
         }
     }
 
+    /// The cache this compilation's spans, sources, and trees live in.
+    #[must_use]
+    pub fn cache(&self) -> &'ec EtaCache {
+        self.cache
+    }
+
     /// Start building an error at `span`. Must be `.emit()`ed or `.cancel()`ed.
-    pub fn err(&self, span: Span, msg: impl Into<String>) -> Diag<'_> {
+    pub fn err<'dcx>(&'dcx self, span: Span, msg: impl Into<String>) -> Diag<'dcx> {
         Diag::new(self, Level::Error, span, msg)
     }
 
     /// Start building a location-less error (I/O failures, bad CLI input, ...).
-    pub fn err_no_span(&self, msg: impl Into<String>) -> Diag<'_> {
+    pub fn err_no_span<'dcx>(&'dcx self, msg: impl Into<String>) -> Diag<'dcx> {
         Diag::new_no_span(self, Level::Error, msg)
     }
 
     /// Start building a warning at `span`.
-    pub fn warn(&self, span: Span, msg: impl Into<String>) -> Diag<'_> {
+    pub fn warn<'dcx>(&'dcx self, span: Span, msg: impl Into<String>) -> Diag<'dcx> {
         Diag::new(self, Level::Warning, span, msg)
     }
 
@@ -113,10 +121,12 @@ impl DiagCtxt {
 /// [`Drop`] bomb will panic in debug mode if dropped without [`emit`](Diag::emit) or
 /// [`cancel`](Diag::cancel).
 ///
-/// A Diag borrows the diagnostic context [`'dcx`]; the [`SCache`] borrow is `'static`.
+/// The single lifetime is the borrow of the context; `DiagCtxt` is covariant
+/// over its cache lifetime, so `&'dcx DiagCtxt<'ec>` shrinks to
+/// `&'dcx DiagCtxt<'dcx>` at construction.
 #[must_use = "a Diag does nothing until you call `.emit()` (or `.cancel()` it)"]
 pub struct Diag<'dcx> {
-    pub(crate) dcx: &'dcx DiagCtxt,
+    pub(crate) dcx: &'dcx DiagCtxt<'dcx>,
     pub level: Level,
     pub message: String,
     pub loc: Option<Span>,
@@ -130,7 +140,7 @@ pub struct Diag<'dcx> {
 
 impl<'dcx> Diag<'dcx> {
     /// Create a new diagnostic at a location with a message.
-    fn new(dcx: &'dcx DiagCtxt, level: Level, span: Span, message: impl Into<String>) -> Self {
+    fn new(dcx: &'dcx DiagCtxt<'dcx>, level: Level, span: Span, message: impl Into<String>) -> Self {
         Self {
             dcx,
             level,
@@ -145,7 +155,7 @@ impl<'dcx> Diag<'dcx> {
     }
 
     /// Create a new diagnostic that doesn't have a location
-    fn new_no_span(dcx: &'dcx DiagCtxt, level: Level, message: impl Into<String>) -> Self {
+    fn new_no_span(dcx: &'dcx DiagCtxt<'dcx>, level: Level, message: impl Into<String>) -> Self {
         Self {
             dcx,
             level,
@@ -160,7 +170,7 @@ impl<'dcx> Diag<'dcx> {
     }
 
     /// Create an error given some IO error.
-    pub fn io(dcx: &'dcx DiagCtxt, io_err: &std::io::Error) -> Self {
+    pub fn io(dcx: &'dcx DiagCtxt<'dcx>, io_err: &std::io::Error) -> Self {
         Self::new_no_span(dcx, Level::Error, io_err.to_string())
     }
 
@@ -191,7 +201,7 @@ impl<'dcx> Diag<'dcx> {
         self
     }
 
-    /// Emit a fully-built [`Diagnostic`].
+    /// Emit a fully-built diagnostic.
     pub fn emit(#[cfg_attr(not(debug_assertions), allow(unused_mut))] mut self) -> ErrorGuaranteed {
         let level = self.level;
         let mut inner = self.dcx.inner.borrow_mut();
@@ -219,13 +229,7 @@ impl<'dcx> Diag<'dcx> {
     }
 }
 
-impl Default for DiagCtxt {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Debug for DiagCtxt {
+impl fmt::Debug for DiagCtxt<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner = self.inner.borrow();
         f.debug_struct("DiagCtxt")

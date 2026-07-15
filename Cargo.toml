@@ -33,18 +33,16 @@ crossbeam-skiplist = "0.1.3"
 # internal
 etac	      = { path = "compiler/etac"}
 etac_ast      = { path = "compiler/etac_ast" }
+etac_cache    = { path = "compiler/etac_cache" }
 etac_driver   = { path = "compiler/etac_driver" }
 etac_errors   = { path = "compiler/etac_errors" }
 etac_lexer    = { path = "compiler/etac_lexer" }
 etac_parse    = { path = "compiler/etac_parse" }
 etac_session  = { path = "compiler/etac_session" }
-etac_span     = { path = "compiler/etac_span" }
 etac_resolve  = { path = "compiler/etac_resolve" }
 etac_types_derive = { path = "proc_macros/etac_types_derive" }
+generate_tests    = { path = "proc_macros/generate_tests" }
 
 # TESTING DEPENDENCIES
 expect-test 	= "1.5.1"
-
-[profile.dev.package]
-insta.opt-level = 3
-similar.opt-level = 3
+indoc 		= "2"

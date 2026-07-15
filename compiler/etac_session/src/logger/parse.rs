@@ -1,27 +1,28 @@
-use etac_errors::{Diag, Level};
-use etac_lexer::{ILexer};
-use etac_parse::IParser;
-use etac_span::{FileId, SCache};
 use std::{fs::File, io::{BufWriter, Write}};
+
+use etac_cache::{EtaCache, FileId};
+use etac_errors::{Diag, Level};
+use etac_lexer::ILexer;
+use etac_parse::IParser;
 
 use crate::logger::Logger;
 
-pub struct TeeParser<I> {
+pub struct TeeParser<'ec, I> {
     /// `None` when `--parse` is off: nothing is opened or written.
     writer: Option<BufWriter<File>>,
-    source: &'static SCache,
+    cache: &'ec EtaCache,
     inner: I,
     stopped: bool,
 }
 
-impl<'dcx, 'src, InnerParser> IParser<'dcx, 'src> for TeeParser<InnerParser>
+impl<'ec, 'dcx, 'src, InnerParser> IParser<'dcx, 'src> for TeeParser<'ec, InnerParser>
 where
     InnerParser: IParser<'dcx, 'src>,
     InnerParser::Out: std::fmt::Display,
 {
     type Out = InnerParser::Out;
 
-    fn parse(&mut self, lexer: &mut impl ILexer<'static, 'src, 'dcx>) -> etac_parse::Parsed<Self::Out> {
+    fn parse(&mut self, lexer: &mut impl ILexer<'src, 'dcx>) -> etac_parse::Parsed<Self::Out> {
         let result = self.inner.parse(lexer);
         if self.stopped || self.writer.is_none() {
             return result;
@@ -34,11 +35,17 @@ where
             }
             etac_parse::Parsed::Recovered(_) |
             etac_parse::Parsed::Failed => {
-                let errors = self.errors_mut();
-                let diag = errors.iter().find(|d| d.level == Level::Error).expect("invarient of recovered");
-                if let Some(loc) = diag.loc {
-                    let msg = diag.message.clone();
-                    let (line, col) = self.source.line_column(loc.lo);
+                let (loc, msg) = {
+                    let diag = self
+                        .inner
+                        .errors_mut()
+                        .iter()
+                        .find(|d| d.level == Level::Error)
+                        .expect("invariant of recovered");
+                    (diag.loc, diag.message.clone())
+                };
+                if let Some(loc) = loc {
+                    let (line, col) = self.cache.line_column(loc.lo);
                     let writer = self.writer.as_mut().expect("checked above");
                     let _ = writeln!(writer, "{line}:{col} error:{msg}");
                 }
@@ -57,7 +64,7 @@ where
         self.inner.into_errors()
     }
 
-    fn diagnostic_context(&self) -> &'dcx etac_errors::DiagCtxt {
+    fn diagnostic_context(&self) -> &'dcx etac_errors::DiagCtxt<'dcx> {
         self.inner.diagnostic_context()
     }
 }
@@ -70,15 +77,15 @@ impl Logger {
     /// failure it writes the first syntax error as `line:col error:<message>`. When parse
     /// logging is off the wrapper is a transparent pass-through, so the caller's type
     /// doesn't change with the flag.
-    pub fn tee_parser<'dcx, 'src, I>(&'dcx self, file: FileId, sources: &'static SCache, inner: I) -> TeeParser<I>
+    pub fn tee_parser<'ec, 'dcx, 'src, I>(&self, file: FileId<'ec>, cache: &'ec EtaCache, inner: I) -> TeeParser<'ec, I>
     where
         I: IParser<'dcx, 'src>,
     {
         TeeParser {
-            source: sources,
+            cache,
             writer: self
                 .parse
-                .then(|| super::open_log(&self.diag_root, sources.load_name(file), "parsed")),
+                .then(|| super::open_log(&self.diag_root, cache.source_name(file), "parsed")),
             inner,
             stopped: false,
         }

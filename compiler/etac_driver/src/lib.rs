@@ -1,16 +1,14 @@
 //! The driver for the compiler
 //!
-//! Passes input between each phase and attches loggers.
-//! Currently also does file resolution / lookup.
+//! Creates the compilation's [`EtaCache`] and diagnostic context, then passes
+//! input between each phase, storing every phase's output back into the cache
+//! and attaching loggers along the way.
 
-use std::path::Path;
-
-use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed, etac_error};
-use etac_ast::SpanTable;
+use etac_cache::{EtaCache, FileId};
+use etac_errors::{Diag, DiagCtxt, ErrorGuaranteed};
 use etac_parse::{IParser, Parsed};
+use etac_resolve::{File, Resolver};
 use etac_session::{cli::Flags, logger::Logger};
-use etac_span::{FileId, Span};
-use etac_resolve::{Resolver, File};
 
 pub use crate::status::{CompilationFailure, CompilationSuccess};
 
@@ -20,53 +18,29 @@ mod status;
 type Result<T> = std::result::Result<T, ErrorGuaranteed>;
 type CompilationResult = std::result::Result<CompilationSuccess, CompilationFailure>;
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-enum LoadBlame {
-    CommandLine,
-    Use(Span),
-}
-
-fn load_file(resolver: &mut Resolver, dcx: &DiagCtxt, path: &Path, blame: LoadBlame) -> Result<Option<(FileId, &'static str)>> {
-    match resolver.classify_cli(dcx, path) {
-        Ok(Some(File::Interface(id))) | Ok(Some(File::Program(id))) => Ok(Some((id, dcx.sources().load_source(id).text()))),
-        Ok(None) =>  Ok(None), // file already loaded
-        Err(diag) => {
-            let g = match blame {
-                LoadBlame::CommandLine => diag.emit(),
-                LoadBlame::Use(span) => diag.with_secondary_label(span, "required by this `use`").emit(),
-            };
-            Err(g)
-        }
-    }
-}
-
-
-
 fn parse_one<'dcx, P>(
-    logger: &'dcx Logger,
-    dcx: &'dcx DiagCtxt,
-    file: FileId,
-    blame: LoadBlame,
+    logger: &Logger,
+    dcx: &'dcx DiagCtxt<'dcx>,
+    file: FileId<'dcx>,
     parser: P,
-) -> Result<Option<P::Out>>
+) -> Result<P::Out>
 where
-    P: IParser<'dcx, 'static>,
+    P: IParser<'dcx, 'dcx>,
     P::Out: std::fmt::Display,
 {
-    let Some((base, source)) = load_file(dcx, file, blame)? else {
-        return Ok(None)
+    let cache = dcx.cache();
+    let lexer = etac_lexer::Lexer::new(cache.base_offset(file), cache.source_text(file), dcx);
+
+    let mut lexer = if logger.lex {
+        compat::ULexer::Tee(logger.tee_lexer(file, cache, lexer))
+    } else {
+        compat::ULexer::Raw(lexer)
     };
 
-    let lexer = etac_lexer::Lexer::new(base, source, dcx);
-
-    let mut lexer = match (logger.lex, blame) {
-        (true, LoadBlame::CommandLine) => compat::ULexer::Tee(logger.tee_lexer(file, etac_span::sources(), lexer)),
-        _ => compat::ULexer::Raw(lexer),
-    };
-
-    let mut parser = match (logger.parse, blame) {
-        (true, LoadBlame::CommandLine) => compat::UParser::Tee(logger.tee_parser(file, etac_span::sources(), parser)),
-        _ => compat::UParser::Raw(parser),
+    let mut parser = if logger.parse {
+        compat::UParser::Tee(logger.tee_parser(file, cache, parser))
+    } else {
+        compat::UParser::Raw(parser)
     };
 
     match parser.parse(&mut lexer) {
@@ -76,18 +50,22 @@ where
                 .into_errors()
                 .into_iter()
                 .map(Diag::emit)
-                .reduce(|_, g| g).expect("parse not to recover with no errors");
+                .reduce(|_, g| g)
+                .expect("parse not to recover with no errors");
             Ok(tree)
-        },
+        }
         Parsed::Failed => {
             let g: ErrorGuaranteed = parser
                 .into_errors()
                 .into_iter()
                 .map(Diag::emit)
-                .reduce(|_, g| g).expect("parse not to fail with no errors");
+                .reduce(|_, g| g)
+                .expect("parse not to fail with no errors");
 
-            // emit extra lexical errors
-            lexer.for_each(|i| {let _ = i.map_err(Diag::emit);});
+            // drain the remaining token stream so trailing lexical errors still reach the user
+            lexer.for_each(|i| {
+                let _ = i.map_err(Diag::emit);
+            });
 
             Err(g)
         }
@@ -96,45 +74,40 @@ where
 
 pub fn run(flags: &Flags) -> CompilationResult {
     let logger = Logger::new(flags);
-    let mut spans = SpanTable::new();
-    let dcx = DiagCtxt::new(etac_span::sources());
-
+    let cache = EtaCache::new();
+    let dcx = DiagCtxt::new(&cache);
 
     let mut resolver = Resolver::new(&flags.source_path, &flags.lib_path);
 
-    let files: Vec<File> = flags
+    let files: Vec<File<'_>> = flags
         .source_files
         .iter()
-        .filter_map(|file| resolver.classify_cli(&dcx, file))
+        .filter_map(|path| match resolver.classify_cli(&dcx, path) {
+            Ok(file) => file,
+            Err(diag) => {
+                diag.emit();
+                None
+            }
+        })
         .collect();
-
-    let mut programs = Vec::new();
-    let mut interfaces = Vec::new();
 
     for file in files {
         match file {
-            File::Program(p) => {
-                let pparser = etac_parse::ProgramParser::new(&dcx, &mut spans);
-                let program = match parse_one(&logger, &dcx, p, LoadBlame::CommandLine, pparser) {
-                    Ok(p) => p,
-                    Err(_g) => continue,
-                };
-                programs.push(program);
-            },
-            File::Interface(i) => {
-                let iparser = etac_parse::InterfaceParser::new(&dcx, &mut spans);
-                let interface = match parse_one(&logger, &dcx, i, LoadBlame::CommandLine, iparser) {
-                    Ok(i) => i,
-                    Err(_g) => continue
-                };
-                interfaces.push(interface);
-            },
+            File::Program(id) => {
+                if let Ok(program) = parse_one(&logger, &dcx, id, etac_parse::ProgramParser::new(&dcx)) {
+                    cache.store_program(id, program);
+                }
+            }
+            File::Interface(id) => {
+                if let Ok(interface) = parse_one(&logger, &dcx, id, etac_parse::InterfaceParser::new(&dcx)) {
+                    cache.store_interface(id, interface);
+                }
+            }
         }
     }
 
-    // report errors
     match dcx.has_errors() {
-        Some(_)=> Err((&dcx).into()),
+        Some(_) => Err((&dcx).into()),
         None => Ok((&dcx).into()),
     }
 }

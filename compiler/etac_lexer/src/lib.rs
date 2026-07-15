@@ -1,7 +1,7 @@
 //! Lexer
 //!
 //! Under the hood uses Logos but exports a compatibility layer more friendly to lalrpop.
-//! Reports a Span within the global source cache.
+//! Reports a Span within the compilation's global offset space.
 #![allow(clippy::cast_possible_truncation)]
 
 use std::{
@@ -10,13 +10,13 @@ use std::{
 };
 
 use etac_errors::{DiagCtxt, Diag, etac_error};
-use etac_span::Span;
+use etac_cache::Span;
 use logos::Logos;
 
 mod internal_error;
 use internal_error::{InternalLexerError, lexer_error};
 
-pub trait ILexer<'sc: 'src + 'dcx, 'src, 'dcx>: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'sc, 'dcx>>> {}
+pub trait ILexer<'src, 'dcx>: Iterator<Item = Result<(u32, Token<'src>, u32), Diag<'dcx>>> {}
 
 fn global_span<'s>(lex: &logos::Lexer<'s, Token<'s>>) -> Span {
     Span::new(lex.extras + lex.span().start as u32, lex.extras + lex.span().end as u32)
@@ -32,14 +32,14 @@ fn lexer_error<'s>(lex: &mut logos::Lexer<'s, Token<'s>>) -> InternalLexerError 
 
 type LogosLexer<'src> = logos::Lexer<'src, Token<'src>>;
 
-pub struct Lexer<'sc: 'src + 'dcx, 'src, 'dcx> {
-    diagc: &'dcx DiagCtxt<'sc>,
+pub struct Lexer<'src, 'dcx> {
+    diagc: &'dcx DiagCtxt<'dcx>,
     inner: logos::SpannedIter<'src, Token<'src>>,
 }
 
-impl<'sc: 'src + 'dcx, 'src, 'dcx> Lexer<'sc, 'src, 'dcx> {
+impl<'src, 'dcx> Lexer<'src, 'dcx> {
     #[must_use]
-    pub fn new(base: u32, source: &'src str, diag_context: &'dcx DiagCtxt<'sc>) -> Self {
+    pub fn new(base: u32, source: &'src str, diag_context: &'dcx DiagCtxt<'dcx>) -> Self {
         Self {
             diagc: diag_context,
             inner: <Token as Logos>::lexer_with_extras(source, base).spanned(),
@@ -47,10 +47,10 @@ impl<'sc: 'src + 'dcx, 'src, 'dcx> Lexer<'sc, 'src, 'dcx> {
     }
 }
 
-impl<'sc: 'src + 'dcx, 'src, 'dcx> ILexer<'sc, 'src, 'dcx> for Lexer<'sc, 'src, 'dcx> {}
+impl<'src, 'dcx> ILexer<'src, 'dcx> for Lexer<'src, 'dcx> {}
 // transformed for lalrpop
-impl<'sc: 'src + 'dcx, 'src, 'dcx> Iterator for Lexer<'sc, 'src, 'dcx> {
-    type Item = Result<(u32, Token<'src>, u32), Diag<'sc, 'dcx>>;
+impl<'src, 'dcx> Iterator for Lexer<'src, 'dcx> {
+    type Item = Result<(u32, Token<'src>, u32), Diag<'dcx>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (next, local_span) = self.inner.next()?;
@@ -59,7 +59,7 @@ impl<'sc: 'src + 'dcx, 'src, 'dcx> Iterator for Lexer<'sc, 'src, 'dcx> {
         match next {
             Ok(tok) => Some(Ok((span.lo, tok, span.hi))),
             Err(diag) => {
-                let mut d: Diag<'sc, 'dcx> = etac_error!(self.diagc, diag.span, "{}", diag.message);
+                let mut d: Diag<'dcx> = etac_error!(self.diagc, diag.span, "{}", diag.message);
                 if let Some(l) = diag.plabel {
                     d = d.with_primary_label(l);
                 }

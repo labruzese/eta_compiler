@@ -6,18 +6,14 @@ authors.workspace = true
 
 [dependencies]
 etac_ast.workspace     = true
+etac_cache.workspace   = true
 etac_errors.workspace  = true
 etac_lexer.workspace   = true
-etac_span.workspace    = true
 either.workspace       = true
 lalrpop-util.workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true
-
 [build-dependencies]
 lalrpop.workspace = true
-
 
 [lints]
 workspace = true

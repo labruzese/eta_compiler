@@ -294,13 +294,13 @@ version = "0.1.0"
 dependencies = [
  "etac_driver",
  "etac_session",
+ "generate_tests",
 ]
 
 [[package]]
 name = "etac_ast"
 version = "0.1.0"
 dependencies = [
- "etac_span",
  "pretty",
 ]
 
@@ -312,23 +312,19 @@ dependencies = [
  "crossbeam-skiplist",
  "dashmap",
  "elsa",
- "etac_errors",
- "etac_span",
- "unicode-width",
+ "etac_ast",
 ]
 
 [[package]]
 name = "etac_driver"
 version = "0.1.0"
 dependencies = [
- "etac_ast",
+ "etac_cache",
  "etac_errors",
  "etac_lexer",
  "etac_parse",
  "etac_resolve",
  "etac_session",
- "etac_span",
- "tempfile",
 ]
 
 [[package]]
@@ -336,17 +332,17 @@ name = "etac_errors"
 version = "0.1.0"
 dependencies = [
  "ariadne",
- "etac_ast",
- "etac_span",
+ "etac_cache",
 ]
 
 [[package]]
 name = "etac_lexer"
 version = "0.1.0"
 dependencies = [
+ "etac_cache",
  "etac_errors",
- "etac_span",
  "expect-test",
+ "indoc",
  "logos",
 ]
 
@@ -356,20 +352,19 @@ version = "0.1.0"
 dependencies = [
  "either",
  "etac_ast",
+ "etac_cache",
  "etac_errors",
  "etac_lexer",
- "etac_span",
  "lalrpop",
  "lalrpop-util 0.21.0",
- "tempfile",
 ]
 
 [[package]]
 name = "etac_resolve"
 version = "0.1.0"
 dependencies = [
+ "etac_cache",
  "etac_errors",
- "etac_span",
  "tempfile",
 ]
 
@@ -378,23 +373,10 @@ name = "etac_session"
 version = "0.1.0"
 dependencies = [
  "clap",
- "etac_ast",
+ "etac_cache",
  "etac_errors",
  "etac_lexer",
  "etac_parse",
- "etac_span",
- "lalrpop-util 0.21.0",
-]
-
-[[package]]
-name = "etac_span"
-version = "0.1.0"
-dependencies = [
- "ariadne",
- "crossbeam-skiplist",
- "dashmap",
- "elsa",
- "unicode-width",
 ]
 
 [[package]]
@@ -403,8 +385,8 @@ version = "0.1.0"
 dependencies = [
  "equivalent",
  "etac_ast",
+ "etac_cache",
  "etac_errors",
- "etac_span",
  "etac_types_derive",
  "paste",
  "smallvec",
@@ -529,6 +511,15 @@ dependencies = [
  "hashbrown 0.17.0",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "indoc"
+version = "2.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -843,6 +834,12 @@ dependencies = [
  "linux-raw-sys",
  "windows-sys",
 ]
+
+[[package]]
+name = "rustversion"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "same-file"

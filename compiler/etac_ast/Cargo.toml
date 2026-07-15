@@ -5,8 +5,7 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-etac_span.workspace   = true
-pretty.workspace      = true
+pretty.workspace = true
 
 [lints]
 workspace = true

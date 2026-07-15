@@ -4,14 +4,14 @@ use etac_parse::IParser;
 use etac_session::logger::{lex::TeeLexer, parse::TeeParser};
 
 /// A wrapper that holds one of the possible lexers that etac can have
-pub enum ULexer<I> {
+pub enum ULexer<'ec, I> {
     Raw(I),
-    Tee(TeeLexer<I>),
+    Tee(TeeLexer<'ec, I>),
 }
 
-impl<'dcx, 'src, I: ILexer<'static, 'src, 'dcx>> ILexer<'static, 'src, 'dcx> for ULexer<I> {}
+impl<'ec, 'src, 'dcx, I: ILexer<'src, 'dcx>> ILexer<'src, 'dcx> for ULexer<'ec, I> {}
 
-impl<'dcx, 'src, I: ILexer<'static, 'src, 'dcx>> Iterator for ULexer<I> {
+impl<'ec, 'src, 'dcx, I: ILexer<'src, 'dcx>> Iterator for ULexer<'ec, I> {
     type Item = I::Item;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -23,19 +23,19 @@ impl<'dcx, 'src, I: ILexer<'static, 'src, 'dcx>> Iterator for ULexer<I> {
 
 
 /// A wrapper that holds one of the possible parsers that etac can have
-pub enum UParser<I> {
+pub enum UParser<'ec, I> {
     Raw(I),
-    Tee(TeeParser<I>),
+    Tee(TeeParser<'ec, I>),
 }
 
-impl<'dcx, 'src, I> IParser<'dcx, 'src> for UParser<I>
+impl<'ec, 'dcx, 'src, I> IParser<'dcx, 'src> for UParser<'ec, I>
 where
-    I: IParser<'dcx, 'src> ,
+    I: IParser<'dcx, 'src>,
     I::Out: std::fmt::Display,
 {
     type Out = I::Out;
 
-    fn parse(&mut self, lexer: &mut impl ILexer<'static, 'src, 'dcx>) -> etac_parse::Parsed<Self::Out> {
+    fn parse(&mut self, lexer: &mut impl ILexer<'src, 'dcx>) -> etac_parse::Parsed<Self::Out> {
         match self {
             UParser::Raw(parser) => parser.parse(lexer),
             UParser::Tee(parser) => parser.parse(lexer),
@@ -56,7 +56,7 @@ where
         }
     }
 
-    fn diagnostic_context(&self) -> &'dcx etac_errors::DiagCtxt {
+    fn diagnostic_context(&self) -> &'dcx etac_errors::DiagCtxt<'dcx> {
         match self {
             UParser::Raw(parser) => parser.diagnostic_context(),
             UParser::Tee(parser) => parser.diagnostic_context(),

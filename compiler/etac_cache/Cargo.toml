@@ -5,13 +5,11 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-ariadne.workspace       = true
-unicode-width.workspace = true
-elsa.workspace		= true
-dashmap.workspace	= true
+etac_ast.workspace           = true
+ariadne.workspace            = true
+elsa.workspace               = true
+dashmap.workspace            = true
 crossbeam-skiplist.workspace = true
-etac_span.workspace = true
-etac_errors.workspace = true
 
 [lints]
 workspace = true

@@ -1,9 +1,8 @@
-mod ariadne_compat;
-pub use ariadne_compat::*;
-
 use std::fmt;
 
-
+/// A region of source text, addressed in the [`EtaCache`](crate::EtaCache)'s
+/// global offset space. Resolve it to a file and local range with
+/// [`EtaCache::resolve_span`](crate::EtaCache::resolve_span).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {
     pub lo: u32,
@@ -21,6 +20,7 @@ impl Span {
         }
     }
 
+    #[must_use]
     pub fn to(self, other: Span) -> Span {
         Span {
             lo: self.lo.min(other.lo),
@@ -32,6 +32,7 @@ impl Span {
     pub fn len(self) -> u32 {
         self.hi - self.lo
     }
+
     #[must_use]
     pub fn is_empty(self) -> bool {
         self.lo == self.hi

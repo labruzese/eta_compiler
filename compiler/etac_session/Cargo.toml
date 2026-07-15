@@ -5,14 +5,11 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+etac_cache.workspace  = true
 etac_errors.workspace = true
 etac_lexer.workspace  = true
 etac_parse.workspace  = true
-etac_span.workspace   = true
-etac_ast.workspace    = true
 clap.workspace        = true
-lalrpop-util.workspace= true
-
 
 [lints]
 workspace = true

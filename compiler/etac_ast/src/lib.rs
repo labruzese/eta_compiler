@@ -1,7 +1,8 @@
 //! Abstract syntax tree for the Eta language.
 //!
-//!  * Every carrier struct owns a [`NodeId`], and spans live outside the tree in the session [`SpanTable`]. Recover a location with
-//!    `spans.get(node.node_id)` or `spans.span_of(&node)`.
+//!  * Every carrier struct owns a [`NodeId`], and spans live outside the tree
+//!    in the compilation cache. Recover a location with `cache.span(node.node_id)`
+//!    or `cache.span_of(&node)`.
 //!
 //!  * Carrier / Kind split: `Expr` { `node_id`, kind: `ExprKind` }, etc. The
 //!    carrier struct owns identity; the `*Kind` enum owns the shape. 
@@ -15,23 +16,20 @@
 //!  * `Error` variants mark recovered regions. The parser only builds one
 //!    after recording the recovery's diagnostic.
 //!
-//!  * One [`SpanTable`] is shared per compilation session and threaded through
-//!    the parses of the program and every interface, so ids are unique across
-//!    all trees. 
-//!
-//!    Later phases (typechecking over a desugared HIR) can key
-//!    per-node facts by `NodeId` against the same flat table, and synthesized
-//!    nodes can allocate ids of their own.
+//!  * Ids are minted by one allocator per compilation, so they are unique
+//!    across all trees. Later phases (typechecking over a desugared HIR) can
+//!    key per-node facts by `NodeId` against the same flat space, and
+//!    synthesized nodes can allocate ids of their own.
 
 mod printer;
 
-mod span_table;
-pub use span_table::*;
+mod node_id;
+pub use node_id::*;
 
 // ---- Node macro ----
 
-/// A carrier struct: owns identity (`node_id`, keying into the session
-/// [`SpanTable`]) plus its public fields. `new` takes the id explicitly.
+/// A carrier struct: owns identity (`node_id`, keying into the compilation
+/// cache's span table) plus its public fields. `new` takes the id explicitly.
 macro_rules! node {
     ($(#[$meta:meta])* $name:ident { $($field:ident : $type:ty),* $(,)? }) => {
         $(#[$meta])*
