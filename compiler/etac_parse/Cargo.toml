@@ -12,6 +12,11 @@ etac_lexer.workspace   = true
 either.workspace       = true
 lalrpop-util.workspace = true
 
+[dev-dependencies]
+expect-test.workspace = true
+indoc.workspace = true
+etac_test.workspace = true
+
 [build-dependencies]
 lalrpop.workspace = true
 

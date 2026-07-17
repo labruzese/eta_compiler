@@ -1,18 +1,15 @@
 [package]
-name = "etac_lexer"
+name = "etac_test"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+etac_ast.workspace    = true
 etac_cache.workspace  = true
 etac_errors.workspace = true
-logos.workspace       = true
-
-[dev-dependencies]
-expect-test.workspace = true
-indoc.workspace = true
-etac_test.workspace = true
+etac_lexer.workspace  = true
+etac_parse.workspace  = true
 
 [lints]
 workspace = true

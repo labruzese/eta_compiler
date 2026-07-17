@@ -5,8 +5,8 @@
 //!    or `cache.span_of(&node)`.
 //!
 //!  * Carrier / Kind split: `Expr` { `node_id`, kind: `ExprKind` }, etc. The
-//!    carrier struct owns identity; the `*Kind` enum owns the shape. 
-//!    Kinds are id-free  implements [`AstNode`] by destructuring to its 
+//!    carrier struct owns identity; the `*Kind` enum owns the shape.
+//!    Kinds are id-free  implements [`AstNode`] by destructuring to its
 //!    concrete payload's id.
 //!
 //!  * [`Leaf<T>`] pairs things too small to earn a full node (operators, `_`
@@ -20,23 +20,41 @@
 //!    across all trees. Later phases (typechecking over a desugared HIR) can
 //!    key per-node facts by `NodeId` against the same flat space, and
 //!    synthesized nodes can allocate ids of their own.
+//!
+//! # S-expression printing
+//!
+//! `#[derive(Sexpr)]` generates the S-expression printer (`Display` plus the
+//! [`crate::sexpr::Sexpr`] trait). Rendering with [`crate::sexpr::Plain`] —
+//! which is what `Display` does — reproduces the exact shapes the parser
+//! tests rely on; rendering with another [`crate::sexpr::SexprCtx`] lets you
+//! attach side-table facts (spans, types, ...) to any node with a `node_id`.
+//! See `printer.rs` for the few custom renderers and an example span context.
 
-mod printer;
+pub mod printer;
+
+pub mod sexpr;
 
 mod node_id;
 pub use node_id::*;
+
+use etac_sexpr_derive::Sexpr;
 
 // ---- Node macro ----
 
 /// A carrier struct: owns identity (`node_id`, keying into the compilation
 /// cache's span table) plus its public fields. `new` takes the id explicitly.
+///
+/// Also derives the S-expression printer; `#[sexpr(...)]` attributes on the
+/// struct or its fields customize the rendering (see `sexpr-derive`).
 macro_rules! node {
-    ($(#[$meta:meta])* $name:ident { $($field:ident : $type:ty),* $(,)? }) => {
+    ($(#[$meta:meta])* $name:ident { $($(#[$fmeta:meta])* $field:ident : $type:ty),* $(,)? }) => {
+        // `derive` first: it introduces the `#[sexpr]` helper attribute that
+        // `$meta` / `$fmeta` may use.
+        #[derive(Debug, Clone, Sexpr)]
         $(#[$meta])*
-        #[derive(Debug, Clone)]
         pub struct $name {
             pub node_id: NodeId,
-            $(pub $field: $type,)*
+            $($(#[$fmeta])* pub $field: $type,)*
         }
         impl AstNode for $name {
             fn node_id(&self) -> NodeId {
@@ -74,6 +92,7 @@ impl<T> AstNode for Leaf<T> {
 // ---- Identifiers ----
 
 node! {
+    #[sexpr(transparent)]
     Ident {
         sym: String
     }
@@ -95,6 +114,7 @@ node! {
 }
 
 node! {
+    #[sexpr(keyword = "use")]
     Use {
         id: Ident
     }
@@ -106,7 +126,8 @@ node! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum DefinitionKind {
     Method(Method),
     GlobDecl(GlobDecl),
@@ -119,7 +140,8 @@ node! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum InterfaceItemKind {
     MethodDecl(MethodDecl),
     Error,
@@ -145,6 +167,7 @@ node! {
 }
 
 node! {
+    #[sexpr(keyword = ":global")]
     GlobDecl {
         id: Ident,
         typ: Type,
@@ -160,8 +183,8 @@ node! {
     }
 }
 
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum ValueKind {
     Int(i64),
     Bool(bool),
@@ -182,10 +205,14 @@ node! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum TypeKind {
+    #[sexpr(keyword = "[]")]
     Array { of: Box<Type>, size: Option<Box<Expr>> },
+    #[sexpr(atom = "int")]
     Int,
+    #[sexpr(atom = "bool")]
     Bool,
     Error,
 }
@@ -201,6 +228,7 @@ impl TypeKind {
 
 node! {
     Block {
+        #[sexpr(splice)]
         stmts: Vec<Stmt>
     }
 }
@@ -211,14 +239,28 @@ node! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum StmtKind {
-    Assign { targets: Vec<Target>, values: Vec<Expr> },
+    #[sexpr(keyword = "=")]
+    Assign {
+        #[sexpr(group)]
+        targets: Vec<Target>,
+        #[sexpr(group)]
+        values: Vec<Expr>,
+    },
+    #[sexpr(keyword = "if")]
     If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
+    #[sexpr(keyword = "while")]
     While { cond: Expr, body: Box<Stmt> },
-    Return { values: Vec<Expr> },
+    #[sexpr(keyword = "return")]
+    Return {
+        #[sexpr(splice)]
+        values: Vec<Expr>,
+    },
     Call(ProcCall),
     Block(Block),
+    #[sexpr(with = "printer::decls_repr")]
     Decls(Vec<Decl>),
     Error,
 }
@@ -227,10 +269,12 @@ pub enum StmtKind {
 
 /// `Target` has no `node_id` of its own; every variant's payload carries one,
 /// so its `AstNode` impl destructures to the concrete payload.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum Target {
     LValue(LValue),
     Decl(Decl),
+    #[sexpr(atom = "_")]
     Discard(Leaf<()>),
 }
 
@@ -250,10 +294,12 @@ node! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum LValueKind {
     Id(Ident),
     ProcCall(ProcCall),
+    #[sexpr(keyword = "[]")]
     Index { array: Box<Expr>, index: Box<Expr> },
 }
 
@@ -262,6 +308,7 @@ pub enum LValueKind {
 node! {
     ProcCall {
         id: Ident,
+        #[sexpr(splice)]
         args: Vec<Expr>
     }
 }
@@ -274,12 +321,15 @@ node! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum ExprKind {
     Id(Ident),
     Lit(Lit),
+    #[sexpr(keyword = "[]")]
     Index { array: Box<Expr>, index: Box<Expr> },
     Call(ProcCall),
+    #[sexpr(keyword = "length")]
     Length(Box<Expr>),
     Unary { op: Leaf<UOp>, operand: Box<Expr> },
     Binary { op: Leaf<BinOp>, lhs: Box<Expr>, rhs: Box<Expr> },
@@ -373,16 +423,20 @@ impl BinOp {
 
 // ---- Literals (id-free; locate via the enclosing Expr) ----
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum Lit {
     Int(i128),
     Bool(bool),
+    #[sexpr(with = "printer::char_repr")]
     Char(char),
     Arr(ArrLit),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sexpr)]
+#[sexpr(no_display)]
 pub enum ArrLit {
+    #[sexpr(with = "printer::str_repr")]
     Str(String),
-    Array(Vec<Expr>),
+    Array(#[sexpr(splice)] Vec<Expr>),
 }

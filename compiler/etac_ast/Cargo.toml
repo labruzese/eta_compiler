@@ -6,6 +6,7 @@ authors.workspace = true
 
 [dependencies]
 pretty.workspace = true
+etac_sexpr_derive.workspace = true
 
 [lints]
 workspace = true
