@@ -1,5 +1,5 @@
 [package]
-name = "etac_sexpr_derive"
+name = "etac_ast_derive"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

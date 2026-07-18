@@ -30,14 +30,17 @@
 //! attach side-table facts (spans, types, ...) to any node with a `node_id`.
 //! See `printer.rs` for the few custom renderers and an example span context.
 
-pub mod printer;
-
-pub mod sexpr;
+// pub mod printer;
+//
+// pub mod sexpr;
 
 mod node_id;
 pub use node_id::*;
 
-use etac_sexpr_derive::Sexpr;
+mod ast_interface;
+pub use ast_interface::*;
+
+use etac_ast_derive::Ast;
 
 // ---- Node macro ----
 
@@ -50,7 +53,7 @@ macro_rules! node {
     ($(#[$meta:meta])* $name:ident { $($(#[$fmeta:meta])* $field:ident : $type:ty),* $(,)? }) => {
         // `derive` first: it introduces the `#[sexpr]` helper attribute that
         // `$meta` / `$fmeta` may use.
-        #[derive(Debug, Clone, Sexpr)]
+        #[derive(Debug, Clone, Ast)]
         $(#[$meta])*
         pub struct $name {
             pub node_id: NodeId,
@@ -71,7 +74,8 @@ macro_rules! node {
 
 /// A `T` too small to earn a carrier struct (operators, `_` discards), paired
 /// with the id under which its span is recorded.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Ast)]
+#[ast(transparent)]
 pub struct Leaf<T> {
     pub node_id: NodeId,
     pub node: T,
@@ -83,7 +87,7 @@ impl<T> Leaf<T> {
     }
 }
 
-impl<T> AstNode for Leaf<T> {
+impl<T: std::fmt::Debug> AstNode for Leaf<T> {
     fn node_id(&self) -> NodeId {
         self.node_id
     }
@@ -92,7 +96,6 @@ impl<T> AstNode for Leaf<T> {
 // ---- Identifiers ----
 
 node! {
-    #[sexpr(transparent)]
     Ident {
         sym: String
     }
@@ -114,7 +117,6 @@ node! {
 }
 
 node! {
-    #[sexpr(keyword = "use")]
     Use {
         id: Ident
     }
@@ -126,8 +128,8 @@ node! {
     }
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
+#[ast(transparent)]
 pub enum DefinitionKind {
     Method(Method),
     GlobDecl(GlobDecl),
@@ -140,8 +142,7 @@ node! {
     }
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum InterfaceItemKind {
     MethodDecl(MethodDecl),
     Error,
@@ -167,7 +168,6 @@ node! {
 }
 
 node! {
-    #[sexpr(keyword = ":global")]
     GlobDecl {
         id: Ident,
         typ: Type,
@@ -183,8 +183,7 @@ node! {
     }
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum ValueKind {
     Int(i64),
     Bool(bool),
@@ -205,14 +204,10 @@ node! {
     }
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum TypeKind {
-    #[sexpr(keyword = "[]")]
     Array { of: Box<Type>, size: Option<Box<Expr>> },
-    #[sexpr(atom = "int")]
     Int,
-    #[sexpr(atom = "bool")]
     Bool,
     Error,
 }
@@ -228,7 +223,6 @@ impl TypeKind {
 
 node! {
     Block {
-        #[sexpr(splice)]
         stmts: Vec<Stmt>
     }
 }
@@ -239,28 +233,19 @@ node! {
     }
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum StmtKind {
-    #[sexpr(keyword = "=")]
     Assign {
-        #[sexpr(group)]
         targets: Vec<Target>,
-        #[sexpr(group)]
         values: Vec<Expr>,
     },
-    #[sexpr(keyword = "if")]
     If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
-    #[sexpr(keyword = "while")]
     While { cond: Expr, body: Box<Stmt> },
-    #[sexpr(keyword = "return")]
     Return {
-        #[sexpr(splice)]
         values: Vec<Expr>,
     },
     Call(ProcCall),
     Block(Block),
-    #[sexpr(with = "printer::decls_repr")]
     Decls(Vec<Decl>),
     Error,
 }
@@ -269,12 +254,10 @@ pub enum StmtKind {
 
 /// `Target` has no `node_id` of its own; every variant's payload carries one,
 /// so its `AstNode` impl destructures to the concrete payload.
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum Target {
     LValue(LValue),
     Decl(Decl),
-    #[sexpr(atom = "_")]
     Discard(Leaf<()>),
 }
 
@@ -294,12 +277,10 @@ node! {
     }
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum LValueKind {
     Id(Ident),
     ProcCall(ProcCall),
-    #[sexpr(keyword = "[]")]
     Index { array: Box<Expr>, index: Box<Expr> },
 }
 
@@ -308,7 +289,6 @@ pub enum LValueKind {
 node! {
     ProcCall {
         id: Ident,
-        #[sexpr(splice)]
         args: Vec<Expr>
     }
 }
@@ -321,15 +301,12 @@ node! {
     }
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum ExprKind {
     Id(Ident),
     Lit(Lit),
-    #[sexpr(keyword = "[]")]
     Index { array: Box<Expr>, index: Box<Expr> },
     Call(ProcCall),
-    #[sexpr(keyword = "length")]
     Length(Box<Expr>),
     Unary { op: Leaf<UOp>, operand: Box<Expr> },
     Binary { op: Leaf<BinOp>, lhs: Box<Expr>, rhs: Box<Expr> },
@@ -423,20 +400,16 @@ impl BinOp {
 
 // ---- Literals (id-free; locate via the enclosing Expr) ----
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum Lit {
     Int(i128),
     Bool(bool),
-    #[sexpr(with = "printer::char_repr")]
     Char(char),
     Arr(ArrLit),
 }
 
-#[derive(Debug, Clone, Sexpr)]
-#[sexpr(no_display)]
+#[derive(Debug, Clone, Ast)]
 pub enum ArrLit {
-    #[sexpr(with = "printer::str_repr")]
     Str(String),
-    Array(#[sexpr(splice)] Vec<Expr>),
+    Array(Vec<Expr>),
 }

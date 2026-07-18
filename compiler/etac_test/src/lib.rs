@@ -50,7 +50,7 @@ pub fn write_parse_output<T: etac_ast::sexpr::Sexpr>(buffer: &mut String, file: 
                 Some(format!("{line_start}:{column_start}..{line_end}:{column_end}"))
             });
             let mut ast_str = String::new();
-            let _ = out.to_doc(&spanctx).render_fmt(etac_ast::sexpr::WIDTH, &mut ast_str);
+            let _ = out.to_doc(&etac_ast::sexpr::Plain).render_fmt(etac_ast::sexpr::WIDTH, &mut ast_str);
             let _ = writeln!(buffer, "{file}::ast {{\n{ast_str}\n}}");
         }
         None => {

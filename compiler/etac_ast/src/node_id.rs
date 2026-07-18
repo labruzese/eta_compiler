@@ -27,6 +27,7 @@ impl NodeId {
     }
 }
 
-pub trait AstNode {
+/// This is a concrete (struct) node, enums don't count
+pub trait AstNode: std::fmt::Debug {
     fn node_id(&self) -> NodeId;
 }

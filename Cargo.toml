@@ -43,7 +43,7 @@ etac_resolve  		= { path = "compiler/etac_resolve" }
 
 # internal macros
 etac_types_derive 	= { path = "proc_macros/etac_types_derive" }
-etac_sexpr_derive	= { path = "proc_macros/etac_sexpr_derive" }
+etac_ast_derive		= { path = "proc_macros/etac_ast_derive" }
 
 # testing
 generate_tests  = { path = "proc_macros/generate_tests" }

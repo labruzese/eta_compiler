@@ -301,8 +301,17 @@ dependencies = [
 name = "etac_ast"
 version = "0.1.0"
 dependencies = [
- "etac_sexpr_derive",
+ "etac_ast_derive",
  "pretty",
+]
+
+[[package]]
+name = "etac_ast_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -382,15 +391,6 @@ dependencies = [
  "etac_errors",
  "etac_lexer",
  "etac_parse",
-]
-
-[[package]]
-name = "etac_sexpr_derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

@@ -65,6 +65,7 @@ struct FileRecord {
 
 #[derive(Default)]
 pub struct EtaCache {
+    ast: Vec<Box<dyn AstNode>>,
     files: FrozenMap<u32, Box<FileRecord>>,
     by_name: DashMap<String, u32>,
     bases: SkipMap<u32, ()>,
