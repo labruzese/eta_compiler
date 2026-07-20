@@ -123,6 +123,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "by_address"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64fa3c856b712db6612c019f14756e64e4bcea13337a6b33b696333a9eaa2d06"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -302,6 +308,7 @@ name = "etac_ast"
 version = "0.1.0"
 dependencies = [
  "etac_ast_derive",
+ "id-arena",
  "pretty",
 ]
 
@@ -309,6 +316,7 @@ dependencies = [
 name = "etac_ast_derive"
 version = "0.1.0"
 dependencies = [
+ "ident_case",
  "proc-macro2",
  "quote",
  "syn",
@@ -318,11 +326,11 @@ dependencies = [
 name = "etac_cache"
 version = "0.1.0"
 dependencies = [
- "ariadne",
  "crossbeam-skiplist",
  "dashmap",
  "elsa",
  "etac_ast",
+ "id-arena",
 ]
 
 [[package]]
@@ -342,6 +350,8 @@ name = "etac_errors"
 version = "0.1.0"
 dependencies = [
  "ariadne",
+ "by_address",
+ "elsa",
  "etac_cache",
 ]
 
@@ -525,6 +535,12 @@ name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
+
+[[package]]
+name = "ident_case"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "indexmap"

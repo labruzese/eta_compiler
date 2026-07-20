@@ -5,8 +5,9 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-pretty.workspace = true
+pretty.workspace 	  = true
 etac_ast_derive.workspace = true
+id-arena.workspace 	  = true
 
 [lints]
 workspace = true

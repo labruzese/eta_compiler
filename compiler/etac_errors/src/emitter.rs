@@ -3,17 +3,45 @@
 //! An [`Emitter`] is the *only* thing that turns a [`Diagnostic`] into output. The
 //! [`DiagCtxt`](crate::DiagCtxt) owns one and routes every diagnostic through it
 
-use std::{cell::RefCell, convert::Infallible, io::Write, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, io::Write, rc::Rc};
 
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
-use etac_cache::Span;
+use etac_cache::sources::{FileId, SourceMap};
 
-use crate::{Diag, Level};
+use crate::{Level};
 
 /// Can take ownership of a diagnostic to emit it
 pub trait Emitter {
-    fn emit(&mut self, diag: Diag<'_>);
+    fn emit<'sm>(&mut self, cache: &mut EmitCache<'sm>, diag: crate::dcx::Diagnostic);
 }
+pub struct EmitCache<'sm> {
+    sm: &'sm SourceMap,
+    cache: HashMap<FileId<'sm>, ariadne::Source<&'sm str>>,
+}
+impl<'sm> EmitCache<'sm> {
+    pub fn new(sm: &'sm SourceMap) -> Self {
+        Self {
+            sm,
+            cache: HashMap::new(),
+        }
+    }
+}
+
+impl<'sm> ariadne::Cache<FileId<'sm>> for &mut EmitCache<'sm> {
+    type Storage = &'sm str;
+
+    fn fetch(&mut self, id: &FileId<'sm>) -> Result<&ariadne::Source<Self::Storage>, impl std::fmt::Debug> {
+        if !self.cache.contains_key(id) {
+            self.cache.insert(*id, ariadne::Source::from(self.sm.get_source(*id).source.as_str()));
+        }
+        Ok::<_, std::convert::Infallible>(self.cache.get(id).unwrap())
+    }
+
+    fn display<'a>(&self, id: &'a FileId<'sm>) -> Option<impl std::fmt::Display + 'a> {
+        Some(self.sm.get_source(*id).name.clone())
+    }
+}
+
 
 /// Renders diagnostics to stderr with source snippets via `ariadne`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -28,7 +56,7 @@ impl<W: Write> IoEmitter<W> {
 }
 
 impl<W: Write> Emitter for IoEmitter<W> {
-    fn emit(&mut self, diag: Diag<'_>) {
+    fn emit<'sm>(&mut self, cache: &mut EmitCache<'sm>, diag: crate::dcx::Diagnostic) {
         let kind = match diag.level {
             Level::Error => ReportKind::Error,
             Level::Warning => ReportKind::Warning,
@@ -36,14 +64,9 @@ impl<W: Write> Emitter for IoEmitter<W> {
         };
 
         if let Some(loc) = diag.loc {
-            // resolve() returns byte ranges; tell ariadne to interpret span
-            // offsets as byte offsets so its line:col header matches what
-            // lc_index() (used by the logger) reports.  Without this,
-            // ariadne defaults to IndexType::Char and misreports columns
-            // whenever multibyte UTF-8 characters appear before the error
-            // in the same file.
             let byte_config = Config::default().with_index_type(IndexType::Byte);
-            let mut b = Report::build(kind, diag.dcx.cache().reportable_span(loc))
+            let aspan = cache.sm.local_span(loc);
+            let mut b = Report::build(kind, aspan)
                 .with_config(byte_config)
                 .with_message(&diag.message);
             if let Some(c) = &diag.code {
@@ -53,12 +76,12 @@ impl<W: Write> Emitter for IoEmitter<W> {
                 b = b.with_note(n);
             }
             for (span, msg, color) in &diag.labels {
-                b = b.with_label(Label::new(diag.dcx.cache().reportable_span(*span)).with_message(msg).with_color(*color));
+                let aspan = cache.sm.local_span(*span);
+                b = b.with_label(Label::new(aspan).with_message(msg).with_color(*color));
             }
-            let _ = b.finish().write(diag.dcx.cache(), &mut self.writer);
+            let _ = b.finish().write(cache, &mut self.writer);
         } else {
-            static NO_SPAN: NoSpan = NoSpan;
-            let mut b = Report::build(kind, NO_SPAN).with_message(&diag.message);
+            let mut b = Report::build(kind, ("dummy", 0..0)).with_message(&diag.message);
             if let Some(c) = &diag.code {
                 b = b.with_code(c);
             }
@@ -66,9 +89,9 @@ impl<W: Write> Emitter for IoEmitter<W> {
                 b = b.with_note(n);
             }
             for (_span, msg, color) in &diag.labels {
-                b = b.with_label(Label::new(NO_SPAN).with_message(msg).with_color(*color));
+                b = b.with_label(Label::new(("dummy", 0..0)).with_message(msg).with_color(*color));
             }
-            let _ = b.finish().write(NoCache, &mut self.writer);
+            let _ = b.finish().write(ariadne::sources::<_, _, [(&str, &str); 0]>([]), &mut self.writer);
         }
     }
 }
@@ -79,7 +102,7 @@ impl<W: Write> Emitter for IoEmitter<W> {
 /// keep a handle, hand a clone to the [`DiagCtxt`](crate::DiagCtxt), run a phase, and
 /// then read back exactly what was emitted via [`take`](BufferEmitter::take).
 #[derive(Debug, Clone, Default)]
-pub struct BufferEmitter(Rc<RefCell<Vec<RecordedDiag>>>);
+pub struct BufferEmitter(Rc<RefCell<Vec<crate::dcx::Diagnostic>>>);
 
 impl BufferEmitter {
     #[must_use]
@@ -89,7 +112,7 @@ impl BufferEmitter {
 
     /// Drain everything emitted so far, leaving the buffer empty.
     #[must_use]
-    pub fn take(&self) -> Vec<RecordedDiag> {
+    pub fn take(&self) -> Vec<crate::dcx::Diagnostic> {
         std::mem::take(&mut self.0.borrow_mut())
     }
 
@@ -105,64 +128,8 @@ impl BufferEmitter {
     }
 }
 
-/// Stored Diag for emitters that are claiming ownership of a Diag
-#[non_exhaustive]
-#[derive(Debug)]
-pub struct RecordedDiag {
-    pub level: Level,
-    pub message: String,
-    pub loc: Option<Span>,
-    pub labels: Vec<(Span, String, ariadne::Color)>,
-    pub code: Option<String>,
-    pub note: Option<String>,
-}
-
 impl Emitter for BufferEmitter {
-    fn emit(&mut self, diag: Diag<'_>) {
-        let rd = RecordedDiag {
-            level: diag.level,
-            message: diag.message,
-            loc: diag.loc,
-            labels: diag.labels,
-            code: diag.code,
-            note: diag.note,
-        };
-        self.0.borrow_mut().push(rd);
-    }
-}
-
-// --- ariadne plumbing for the location-less path ---
-
-/// Zero-sized [`ariadne::Span`] for diagnostics that have no source location.
-/// All of its impls are no-ops.
-#[derive(Clone, Copy)]
-struct NoSpan;
-
-/// Zero-sized [`ariadne::Cache`] paired with [`NoSpan`].
-#[derive(Clone, Copy)]
-struct NoCache;
-
-impl ariadne::Span for NoSpan {
-    type SourceId = ();
-    fn source(&self) -> &Self::SourceId {
-        &()
-    }
-    fn start(&self) -> usize {
-        0
-    }
-    fn end(&self) -> usize {
-        0
-    }
-}
-
-impl ariadne::Cache<()> for NoCache {
-    type Storage = &'static str;
-    fn fetch(&mut self, _id: &()) -> Result<&ariadne::Source<Self::Storage>, impl std::fmt::Debug> {
-        static SOURCE: std::sync::LazyLock<ariadne::Source<&'static str>> =
-            std::sync::LazyLock::new(|| ariadne::Source::from(""));
-        Ok::<_, Infallible>(&SOURCE)
-    }
-    fn display<'a>(&self, _id: &'a ()) -> Option<impl std::fmt::Display + 'a> {
-        Some("")
+    fn emit(&mut self, _source_map: &mut EmitCache, diagnostic: crate::dcx::Diagnostic) {
+        self.0.borrow_mut().push(diagnostic);
     }
 }

@@ -1,119 +1,100 @@
-//! The diagnostic context
-//!
-//! * [`DiagCtxt`] borrows the compilation's [`EtaCache`] (to render spans) and
-//!   owns the [`Emitter`] and the running error/warning counts. Nothing else
-//!   emits. Borrow `&DiagCtxt` and report directly.
-//!
-//! * [`ErrorGuaranteed`] is a *proof* that an error reached the user. A function returning
-//!   `Result<T, ErrorGuaranteed>` is making a promise: "if this is `Err`, a
-//!   diagnostic was emitted."
-//!
-//! * [`Diag`] is a builder bound to the context. It carries a bomb: a diagnostic
-//!   that is built but neither `.emit()`ed nor `.cancel()`ed is a bug.
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use std::cell::RefCell;
-use std::fmt;
-
-use etac_cache::{EtaCache, Span};
+use etac_cache::sources::{SourceMap, Span};
 
 use crate::Level;
 use crate::emitter::{Emitter, IoEmitter};
 
 #[cfg(debug_assertions)]
 use crate::drop_bomb::DropBomb;
+use crate::guarentee::ErrorGuaranteed;
 
-/// Proof that a compilation error was reported through a [`DiagCtxt`].
-///
-/// Construct it only by *actually emitting* an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ErrorGuaranteed(());
-
-impl ErrorGuaranteed {
-    /// Private so it can only originate on a real error path in this module.
-    #[inline]
-    pub(crate) fn new() -> Self {
-        ErrorGuaranteed(())
-    }
-
-    /// Assert that an error was already reported elsewhere, without emitting one here.
-    ///
-    /// # Safety
-    /// The compiler can't prove that an error was actually reported when constructed this way.
-    /// You're responsible for making sure that actually emit the error to the user.
-    #[inline]
-    #[must_use]
-    pub unsafe fn claim_already_emitted() -> Self {
-        ErrorGuaranteed(())
-    }
-}
-
-pub(crate) struct Inner {
+pub struct DiagCtx {
+    diagnostics: elsa::sync::FrozenVec<Box<Diagnostic>>,
     emitter: Box<dyn Emitter>,
-    err_count: usize,
-    warn_count: usize,
+    err_count: AtomicUsize,
+    warn_count: AtomicUsize,
+    #[cfg(debug_assertions)] bomb: DropBomb,
 }
 
-/// The single diagnostic sink for a compilation. Borrows the [`EtaCache`] the
-/// compilation's spans resolve against.
-pub struct DiagCtxt<'ec> {
-    pub(crate) cache: &'ec EtaCache,
-    pub(crate) inner: RefCell<Inner>,
+impl Default for DiagCtx {
+    fn default() -> Self {
+        Self::new()
+    }
 }
-
-impl<'ec> DiagCtxt<'ec> {
+impl DiagCtx {
     /// A context that renders to stderr.
-    #[must_use]
-    pub fn new(cache: &'ec EtaCache) -> Self {
-        Self::with_emitter(cache, Box::new(IoEmitter::new(std::io::stderr())))
+    pub fn new() -> Self {
+        Self::with_emitter(Box::new(IoEmitter::new(std::io::stderr())))
     }
 
     /// A context with a custom sink (example: [`BufferEmitter`](crate::BufferEmitter)).
     #[must_use]
-    pub fn with_emitter(cache: &'ec EtaCache, emitter: Box<dyn Emitter>) -> Self {
+    pub fn with_emitter(emitter: Box<dyn Emitter>) -> Self {
         Self {
-            cache,
-            inner: RefCell::new(Inner {
-                emitter,
-                err_count: 0,
-                warn_count: 0,
-            }),
+            diagnostics: elsa::sync::FrozenVec::new(),
+            emitter,
+            err_count: 0.into(),
+            warn_count: 0.into(),
+            #[cfg(debug_assertions)] bomb: DropBomb::new("DiagCtx dropped without writing diagnostics to emitter"),
         }
     }
 
-    /// The cache this compilation's spans, sources, and trees live in.
-    #[must_use]
-    pub fn cache(&self) -> &'ec EtaCache {
-        self.cache
-    }
-
-    /// Start building an error at `span`. Must be `.emit()`ed or `.cancel()`ed.
-    pub fn err<'dcx>(&'dcx self, span: Span, msg: impl Into<String>) -> Diag<'dcx> {
+    /// Start building an error at `span`. 
+    pub fn err(&self, span: Span, msg: impl Into<String>) -> Diag<'_> {
         Diag::new(self, Level::Error, span, msg)
     }
 
-    /// Start building a location-less error (I/O failures, bad CLI input, ...).
-    pub fn err_no_span<'dcx>(&'dcx self, msg: impl Into<String>) -> Diag<'dcx> {
+    /// Start building a location-less error.
+    pub fn err_no_span(&self, msg: impl Into<String>) -> Diag<'_> {
         Diag::new_no_span(self, Level::Error, msg)
     }
 
     /// Start building a warning at `span`.
-    pub fn warn<'dcx>(&'dcx self, span: Span, msg: impl Into<String>) -> Diag<'dcx> {
+    pub fn warn(& self, span: Span, msg: impl Into<String>) -> Diag<'_> {
         Diag::new(self, Level::Warning, span, msg)
     }
 
+    pub fn io_err(&self, io_err: std::io::Error) -> Diag<'_> {
+        self.err_no_span(io_err.to_string())
+    }
+
     pub fn err_count(&self) -> usize {
-        self.inner.borrow().err_count
+        self.err_count.load(Ordering::Acquire)
     }
 
     pub fn warn_count(&self) -> usize {
-        self.inner.borrow().warn_count
+        self.warn_count.load(Ordering::Acquire)
     }
 
-    /// `Some(proof)` iff at least one error has been emitted.
-    // TODO: move this into a bool this really shouldn't be a way of getting an ErrorGuaranteed
-    pub fn has_errors(&self) -> Option<ErrorGuaranteed> {
-        (self.err_count() > 0).then(ErrorGuaranteed::new)
+    pub fn has_errors(&self) -> bool {
+        self.err_count() > 0
     }
+
+    pub fn emit_diagnostics(mut self, source_map: &SourceMap) {
+        let mut emit_cache = crate::emitter::EmitCache::new(source_map);
+        for diag in self.diagnostics.into_vec().drain(..) {
+            self.emitter.emit(&mut emit_cache, *diag);
+        }
+        #[cfg(debug_assertions)] self.bomb.defuse();
+    }
+
+    /// deliberately don't emit the diagnostics to emitter
+    pub fn cancel(#[cfg_attr(not(debug_assertions), allow(unused_mut))] mut self) {
+        #[cfg(debug_assertions)] self.bomb.defuse();
+    }
+
+
+}
+
+#[derive(Debug)]
+pub(crate) struct Diagnostic {
+    pub level: Level,
+    pub message: String,
+    pub loc: Option<Span>,
+    pub labels: Vec<(Span, String, ariadne::Color)>,
+    pub code: Option<String>,
+    pub note: Option<String>,
 }
 
 /// A diagnostic under construction, knowing its [`DiagCtxt`].
@@ -126,58 +107,49 @@ impl<'ec> DiagCtxt<'ec> {
 /// `&'dcx DiagCtxt<'dcx>` at construction.
 #[must_use = "a Diag does nothing until you call `.emit()` (or `.cancel()` it)"]
 pub struct Diag<'dcx> {
-    pub(crate) dcx: &'dcx DiagCtxt<'dcx>,
-    pub level: Level,
-    pub message: String,
-    pub loc: Option<Span>,
-    pub labels: Vec<(Span, String, ariadne::Color)>,
-    pub code: Option<String>,
-    pub note: Option<String>,
-
-    #[cfg(debug_assertions)]
-    bomb: DropBomb,
+    pub(crate) dcx: &'dcx DiagCtx,
+    pub diagnostic: Box<Diagnostic>,
+    #[cfg(debug_assertions)] bomb: DropBomb,
 }
-
 impl<'dcx> Diag<'dcx> {
     /// Create a new diagnostic at a location with a message.
-    fn new(dcx: &'dcx DiagCtxt<'dcx>, level: Level, span: Span, message: impl Into<String>) -> Self {
+    fn new(dcx: &'dcx DiagCtx, level: Level, span: Span, message: impl Into<String>) -> Self {
         Self {
             dcx,
-            level,
-            code: None,
-            message: message.into(),
-            labels: Vec::new(),
-            loc: Some(span),
-            note: None,
+            diagnostic: Box::new(Diagnostic {
+                level,
+                code: None,
+                message: message.into(),
+                labels: Vec::new(),
+                loc: Some(span),
+                note: None,
+            }),
             #[cfg(debug_assertions)]
-            bomb: DropBomb::new(),
+            bomb: DropBomb::new("Diag dropped without writing diagnostic to context"),
         }
     }
 
     /// Create a new diagnostic that doesn't have a location
-    fn new_no_span(dcx: &'dcx DiagCtxt<'dcx>, level: Level, message: impl Into<String>) -> Self {
+    fn new_no_span(dcx: &'dcx DiagCtx, level: Level, message: impl Into<String>) -> Self {
         Self {
             dcx,
-            level,
-            code: None,
-            message: message.into(),
-            labels: Vec::new(),
-            loc: None,
-            note: None,
+            diagnostic: Box::new(Diagnostic {
+                level,
+                code: None,
+                message: message.into(),
+                labels: Vec::new(),
+                loc: None,
+                note: None,
+            }),
             #[cfg(debug_assertions)]
-            bomb: DropBomb::new(),
+            bomb: DropBomb::new("Diag dropped without writing diagnostic to context"),
         }
-    }
-
-    /// Create an error given some IO error.
-    pub fn io(dcx: &'dcx DiagCtxt<'dcx>, io_err: &std::io::Error) -> Self {
-        Self::new_no_span(dcx, Level::Error, io_err.to_string())
     }
 
     /// Point the primary (red) label at the diagnostic's own span.
     pub fn with_primary_label(mut self, msg: impl Into<String>) -> Self {
-        self.labels.push((
-            self.loc
+        self.diagnostic.labels.push((
+            self.diagnostic.loc
                 .unwrap_or_else(|| panic!("can not add primary label to a diagnostic without a location")),
             msg.into(),
             ariadne::Color::Red,
@@ -187,30 +159,29 @@ impl<'dcx> Diag<'dcx> {
 
     /// Add a secondary (yellow) label at another span.
     pub fn with_secondary_label(mut self, span: Span, msg: impl Into<String>) -> Self {
-        self.labels.push((span, msg.into(), ariadne::Color::Yellow));
+        self.diagnostic.labels.push((span, msg.into(), ariadne::Color::Yellow));
         self
     }
 
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.note = Some(note.into());
+        self.diagnostic.note = Some(note.into());
         self
     }
 
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
-        self.code = Some(code.into());
+        self.diagnostic.code = Some(code.into());
         self
     }
 
     /// Emit a fully-built diagnostic.
-    pub fn emit(#[cfg_attr(not(debug_assertions), allow(unused_mut))] mut self) -> ErrorGuaranteed {
-        let level = self.level;
-        let mut inner = self.dcx.inner.borrow_mut();
+    pub fn finish(mut self) -> ErrorGuaranteed {
+        let level = self.diagnostic.level;
         match level {
             Level::Error => {
-                inner.err_count += 1;
+                self.dcx.err_count.fetch_add(1, Ordering::Release);
             }
             Level::Warning => {
-                inner.warn_count += 1;
+                self.dcx.warn_count.fetch_add(1, Ordering::Release);
             }
             _ => (),
         }
@@ -218,7 +189,7 @@ impl<'dcx> Diag<'dcx> {
         #[cfg(debug_assertions)]
         self.bomb.defuse();
 
-        inner.emitter.emit(self);
+        self.dcx.diagnostics.push(self.diagnostic);
         ErrorGuaranteed::new()
     }
 
@@ -229,13 +200,33 @@ impl<'dcx> Diag<'dcx> {
     }
 }
 
-impl fmt::Debug for DiagCtxt<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let inner = self.inner.borrow();
-        f.debug_struct("DiagCtxt")
-            .field("err_count", &inner.err_count)
-            .field("warn_count", &inner.warn_count)
-            .finish_non_exhaustive()
-    }
-}
-
+// use std::fmt::Write;
+// impl Diag<'_> {
+//     pub fn test_format(&self, cache: &EtaCache) -> String {
+//         let mut out = String::new();
+//         let loc = self.loc;
+//         let level = &self.level;
+//         let message = &self.message;
+//         let note = self.note.as_deref().unwrap_or("");
+//         let mut labels = String::new();
+//         self.labels.iter().for_each(|(span, message, ..)| {
+//             let file = cache.source_name(cache.resolve_span(*span).1);
+//             let (line_start, column_start) = cache.line_column(span.lo);
+//             let (line_end, column_end) = cache.line_column(span.hi);
+//             let _ = writeln!(labels, "\n\t{file}:{line_start}:{column_start}..{line_end}:{column_end} {message:?}");
+//         });
+//         let diag_str = format!("{level:?} {{\n\tmessage: {message}\n\tnote: {note}{labels}}}");
+//         match loc {
+//             Some(s) => {
+//                 let file = cache.source_name(cache.resolve_span(s).1);
+//                 let (line_start, column_start) = cache.line_column(s.lo);
+//                 let (line_end, column_end) = cache.line_column(s.hi);
+//                 let _ = write!(out, "{file}:{line_start}:{column_start}..{line_end}:{column_end} {diag_str}");
+//             }
+//             None => {
+//                 let _ = write!(out, "{diag_str}");
+//             }
+//         }
+//         out
+//     }
+// }

@@ -4,6 +4,7 @@ use etac_errors::{etac_error, Diag};
 use etac_lexer::Token;
 use etac_cache::Span;
 use crate::{ParseState, lvalue_to_expr};
+use crate::alloc;
 
 grammar<'dcx, 'src>(state: &mut ParseState<'dcx, 'src>);
 
@@ -84,11 +85,11 @@ extern {
 
 Ident: Ident = <l:@L> <s:"ident"> <r:@R> => Ident::new(state.cache.alloc_span(Span::new(l, r)), s.to_string());
 
-// ---- Top Level ----
+// Top level
 
 pub Program: Program = {
     <l:@L> <uses:UseList> <definitions:Definition+> <r:@R> =>
-	Program::new(state.cache.alloc_span(Span::new(l, r)), uses, definitions),
+	alloc!{ Program::new(uses, definitions) @l..r }
     <uses:UseList> <r:@R> =>? Err(
 	etac_error! {
 	    state.diagc, Span::new(r, r), "Program must contain at least one definition";

@@ -6,10 +6,10 @@ authors.workspace = true
 
 [dependencies]
 etac_ast.workspace           = true
-ariadne.workspace            = true
 elsa.workspace               = true
 dashmap.workspace            = true
 crossbeam-skiplist.workspace = true
+id-arena.workspace 	     = true
 
 [lints]
 workspace = true

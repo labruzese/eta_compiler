@@ -1,8 +1,11 @@
-use etac_ast::{Expr, ExprKind, LValue, LValueKind};
+use etac_ast::{Expr, ExprKind, LValue, LvalueKind};
 use etac_cache::{EtaCache, Span};
 use etac_errors::{etac_error, Diag, DiagCtxt};
 use etac_lexer::{ILexer, Token};
 use lalrpop_util::{lalrpop_mod, ErrorRecovery, ParseError};
+
+#[macro_use]
+mod grammar_macros;
 
 lalrpop_mod!(grammar);
 
@@ -131,9 +134,9 @@ impl_iparser! {grammar::InterfaceParser, etac_ast::Interface}
 /// the accumulated base through here when folding postfix `[..]` groups.
 pub(crate) fn lvalue_to_expr(lv: LValue, cache: &EtaCache) -> Expr {
     let kind = match lv.kind {
-        LValueKind::Id(id) => ExprKind::Id(id),
-        LValueKind::ProcCall(pc) => ExprKind::Call(pc),
-        LValueKind::Index { array, index } => ExprKind::Index { array, index },
+        LvalueKind::Id(id) => ExprKind::Id(id),
+        LvalueKind::ProcCall(pc) => ExprKind::Call(pc),
+        LvalueKind::Index { array, index } => ExprKind::Index { array, index },
     };
     Expr::new(cache.dup_span(lv.node_id), kind)
 }
